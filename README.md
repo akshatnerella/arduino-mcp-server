@@ -7,6 +7,7 @@ Arduino MCP server that wraps `arduino-cli` so AI agents can discover boards/por
   - detecting connected hardware with inferred FQBN and next commands
   - checking `arduino-cli` availability with OS-specific install guidance (`arduino_cli_doctor`)
   - auto-installing `arduino-cli` when missing (`install_arduino_cli`)
+  - ensuring required board cores are installed (`ensure_core_installed`)
   - listing supported boards
   - compiling sketches
   - uploading sketches
@@ -34,6 +35,9 @@ Do not attempt fallback hardware scans before `arduino-cli` is available.
 When `detect_hardware` returns unresolved/non-standard board matches, the tool now includes
 `requiresUserBoardConfirmation` and an `agentAction` question payload. Agents should ask the user
 to confirm board model/FQBN before continuing.
+
+`compile_sketch` and `upload_sketch` automatically ensure board core installation from FQBN by default
+(`autoInstallCore=true`), so agents should not need manual `arduino-cli core install` in normal flows.
 
 ## Install Arduino CLI Quickly
 Official docs: https://docs.arduino.cc/arduino-cli/installation/

@@ -305,6 +305,143 @@ async function findArduinoCliExecutable(): Promise<string | null> {
   return null;
 }
 
+function fqbnToCoreId(fqbn: string): string | null {
+  const parts = fqbn.split(":").map((p) => p.trim()).filter((p) => p.length > 0);
+  if (parts.length < 2) {
+    return null;
+  }
+  return `${parts[0]}:${parts[1]}`;
+}
+
+function extractCoreIdFromEntry(entry: JsonRecord): string | null {
+  const direct = asString(entry.id) ?? asString(entry.ID) ?? asString(entry.core_id) ?? asString(entry.core);
+  if (direct) {
+    return direct;
+  }
+
+  const pkg = asString(entry.package);
+  const arch = asString(entry.architecture);
+  if (pkg && arch) {
+    return `${pkg}:${arch}`;
+  }
+
+  return null;
+}
+
+function extractInstalledCoreIds(payload: unknown): Set<string> {
+  const out = new Set<string>();
+
+  const collect = (value: unknown) => {
+    const records = asArray(value).map(asRecord).filter((r): r is JsonRecord => r !== null);
+    for (const record of records) {
+      const coreId = extractCoreIdFromEntry(record);
+      if (coreId) {
+        out.add(coreId);
+      }
+    }
+  };
+
+  if (Array.isArray(payload)) {
+    collect(payload);
+    return out;
+  }
+
+  const root = asRecord(payload);
+  if (!root) {
+    return out;
+  }
+
+  collect(root.installed);
+  collect(root.platforms);
+  collect(root.cores);
+  collect(root.data);
+
+  if (out.size === 0) {
+    collect([root]);
+  }
+
+  return out;
+}
+
+interface EnsureCoreResult {
+  ok: boolean;
+  coreId: string;
+  installed: boolean;
+  alreadyInstalled: boolean;
+  autoInstallRequested: boolean;
+  autoInstallAttempted: boolean;
+  listBeforeRaw?: CommandResult;
+  updateIndexRaw?: CommandResult;
+  installRaw?: CommandResult;
+  listAfterRaw?: CommandResult;
+  error?: string;
+}
+
+async function ensureCoreInstalled(coreId: string, autoInstall = true): Promise<EnsureCoreResult> {
+  const listBeforeRaw = await runArduinoCli(arduinoConfig, ["core", "list", "--format", "json"], 120_000);
+  if (!listBeforeRaw.ok) {
+    return {
+      ok: false,
+      coreId,
+      installed: false,
+      alreadyInstalled: false,
+      autoInstallRequested: autoInstall,
+      autoInstallAttempted: false,
+      listBeforeRaw,
+      error: "Failed to list installed Arduino cores."
+    };
+  }
+
+  const beforeParsed = tryParseJson<unknown>(listBeforeRaw.stdout);
+  const installedBefore = extractInstalledCoreIds(beforeParsed).has(coreId);
+  if (installedBefore) {
+    return {
+      ok: true,
+      coreId,
+      installed: true,
+      alreadyInstalled: true,
+      autoInstallRequested: autoInstall,
+      autoInstallAttempted: false,
+      listBeforeRaw
+    };
+  }
+
+  if (!autoInstall) {
+    return {
+      ok: false,
+      coreId,
+      installed: false,
+      alreadyInstalled: false,
+      autoInstallRequested: false,
+      autoInstallAttempted: false,
+      listBeforeRaw,
+      error: `Required core "${coreId}" is not installed.`
+    };
+  }
+
+  const updateIndexRaw = await runArduinoCli(arduinoConfig, ["core", "update-index"], 240_000);
+  const installRaw = await runArduinoCli(arduinoConfig, ["core", "install", coreId], 600_000);
+  const listAfterRaw = await runArduinoCli(arduinoConfig, ["core", "list", "--format", "json"], 120_000);
+
+  const afterParsed = tryParseJson<unknown>(listAfterRaw.stdout);
+  const installedAfter = listAfterRaw.ok && extractInstalledCoreIds(afterParsed).has(coreId);
+  const ok = installRaw.ok && installedAfter;
+
+  return {
+    ok,
+    coreId,
+    installed: installedAfter,
+    alreadyInstalled: false,
+    autoInstallRequested: true,
+    autoInstallAttempted: true,
+    listBeforeRaw,
+    updateIndexRaw,
+    installRaw,
+    listAfterRaw,
+    error: ok ? undefined : `Failed to install core "${coreId}".`
+  };
+}
+
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -701,6 +838,79 @@ server.registerTool(
 );
 
 server.registerTool(
+  "ensure_core_installed",
+  {
+    title: "Ensure Core Installed",
+    description:
+      "Ensure the Arduino core required by a board FQBN is installed. Can auto-install via `arduino-cli core install`.",
+    inputSchema: {
+      fqbn: z.string().optional().describe("Board FQBN, e.g. arduino:avr:uno."),
+      coreId: z.string().optional().describe("Core ID, e.g. arduino:avr."),
+      autoInstall: z.boolean().optional().describe("If true (default), install missing core automatically.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ fqbn, coreId, autoInstall = true }) => {
+    try {
+      const resolvedCoreId = coreId ?? (fqbn ? fqbnToCoreId(fqbn) : null);
+      if (!resolvedCoreId) {
+        return toToolResult(
+          {
+            ok: false,
+            command: "ensure_core_installed",
+            data: {
+              fqbn: fqbn ?? null,
+              coreId: coreId ?? null
+            },
+            error: "Provide either a valid `coreId` or `fqbn`."
+          },
+          true
+        );
+      }
+
+      const ensure = await ensureCoreInstalled(resolvedCoreId, autoInstall);
+      const primaryRaw = ensure.installRaw ?? ensure.listBeforeRaw;
+      const primaryErrorRaw = ensure.installRaw ?? ensure.listBeforeRaw ?? ensure.listAfterRaw;
+
+      return toToolResult(
+        {
+          ok: ensure.ok,
+          command: "ensure core",
+          data: {
+            fqbn: fqbn ?? null,
+            coreId: ensure.coreId,
+            installed: ensure.installed,
+            alreadyInstalled: ensure.alreadyInstalled,
+            autoInstallRequested: ensure.autoInstallRequested,
+            autoInstallAttempted: ensure.autoInstallAttempted,
+            commands: {
+              listBefore: ensure.listBeforeRaw ? summarizeCommandResult(ensure.listBeforeRaw) : null,
+              updateIndex: ensure.updateIndexRaw ? summarizeCommandResult(ensure.updateIndexRaw) : null,
+              install: ensure.installRaw ? summarizeCommandResult(ensure.installRaw) : null,
+              listAfter: ensure.listAfterRaw ? summarizeCommandResult(ensure.listAfterRaw) : null
+            }
+          },
+          raw: primaryRaw,
+          error:
+            ensure.ok || !primaryErrorRaw
+              ? undefined
+              : withCliHint(ensure.error ?? "Failed to ensure required core installation.", primaryErrorRaw)
+        },
+        !ensure.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
   "detect_hardware",
   {
     title: "Detect Hardware",
@@ -838,12 +1048,14 @@ server.registerTool(
               ? {
                   compile_sketch: {
                     sketchPath: "<sketchPath>",
-                    fqbn: inferredFqbn
+                    fqbn: inferredFqbn,
+                    autoInstallCore: true
                   },
                   upload_sketch: {
                     sketchPath: "<sketchPath>",
                     port: address,
-                    fqbn: inferredFqbn
+                    fqbn: inferredFqbn,
+                    autoInstallCore: true
                   }
                 }
               : null
@@ -923,7 +1135,11 @@ server.registerTool(
       exportBinaries: z.boolean().optional().describe("If true, export binaries into sketch folder."),
       clean: z.boolean().optional().describe("If true, clean build cache before compile."),
       buildPath: z.string().optional().describe("Optional build output directory."),
-      warnings: z.enum(["none", "default", "more", "all"]).optional()
+      warnings: z.enum(["none", "default", "more", "all"]).optional(),
+      autoInstallCore: z
+        .boolean()
+        .optional()
+        .describe("If true (default), auto-install missing board core before compile.")
     },
     outputSchema: toolOutputShape,
     annotations: {
@@ -933,9 +1149,41 @@ server.registerTool(
       openWorldHint: false
     }
   },
-  async ({ sketchPath, fqbn, exportBinaries, clean, buildPath, warnings }) => {
+  async ({ sketchPath, fqbn, exportBinaries, clean, buildPath, warnings, autoInstallCore = true }) => {
     try {
       const resolvedSketchPath = resolveSketchPath(sketchPath, arduinoConfig.sketchRoot);
+      const coreId = fqbnToCoreId(fqbn);
+      const coreEnsure = coreId ? await ensureCoreInstalled(coreId, autoInstallCore) : null;
+      if (coreEnsure && !coreEnsure.ok) {
+        const rawForError = coreEnsure.installRaw ?? coreEnsure.listBeforeRaw ?? coreEnsure.listAfterRaw;
+        return toToolResult(
+          {
+            ok: false,
+            command: "compile",
+            data: {
+              sketchPath: resolvedSketchPath,
+              fqbn,
+              coreId,
+              autoInstallCore,
+              coreEnsure: {
+                installed: coreEnsure.installed,
+                alreadyInstalled: coreEnsure.alreadyInstalled,
+                autoInstallAttempted: coreEnsure.autoInstallAttempted
+              }
+            },
+            raw: rawForError,
+            error:
+              rawForError
+                ? withCliHint(
+                    coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`,
+                    rawForError
+                  )
+                : coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`
+          },
+          true
+        );
+      }
+
       const args = ["compile", resolvedSketchPath, "--fqbn", fqbn];
 
       if (buildPath) {
@@ -958,7 +1206,15 @@ server.registerTool(
           command: "compile",
           data: {
             sketchPath: resolvedSketchPath,
-            fqbn
+            fqbn,
+            coreId,
+            coreEnsure: coreEnsure
+              ? {
+                  installed: coreEnsure.installed,
+                  alreadyInstalled: coreEnsure.alreadyInstalled,
+                  autoInstallAttempted: coreEnsure.autoInstallAttempted
+                }
+              : null
           },
           raw,
           error: raw.ok ? undefined : withCliHint("Sketch compilation failed.", raw)
@@ -980,7 +1236,11 @@ server.registerTool(
       sketchPath: z.string().describe("Path to sketch folder or .ino file."),
       port: z.string().describe("Serial port path, e.g. COM6 or /dev/ttyACM0."),
       fqbn: z.string().optional().describe("Optional board FQBN when auto-detect is insufficient."),
-      verify: z.boolean().optional().describe("Verify uploaded binary when supported.")
+      verify: z.boolean().optional().describe("Verify uploaded binary when supported."),
+      autoInstallCore: z
+        .boolean()
+        .optional()
+        .describe("If true (default), auto-install missing board core when fqbn is provided.")
     },
     outputSchema: toolOutputShape,
     annotations: {
@@ -990,9 +1250,42 @@ server.registerTool(
       openWorldHint: false
     }
   },
-  async ({ sketchPath, port, fqbn, verify }) => {
+  async ({ sketchPath, port, fqbn, verify, autoInstallCore = true }) => {
     try {
       const resolvedSketchPath = resolveSketchPath(sketchPath, arduinoConfig.sketchRoot);
+      const coreId = fqbn ? fqbnToCoreId(fqbn) : null;
+      const coreEnsure = coreId ? await ensureCoreInstalled(coreId, autoInstallCore) : null;
+      if (coreEnsure && !coreEnsure.ok) {
+        const rawForError = coreEnsure.installRaw ?? coreEnsure.listBeforeRaw ?? coreEnsure.listAfterRaw;
+        return toToolResult(
+          {
+            ok: false,
+            command: "upload",
+            data: {
+              sketchPath: resolvedSketchPath,
+              port,
+              fqbn: fqbn ?? null,
+              coreId,
+              autoInstallCore,
+              coreEnsure: {
+                installed: coreEnsure.installed,
+                alreadyInstalled: coreEnsure.alreadyInstalled,
+                autoInstallAttempted: coreEnsure.autoInstallAttempted
+              }
+            },
+            raw: rawForError,
+            error:
+              rawForError
+                ? withCliHint(
+                    coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`,
+                    rawForError
+                  )
+                : coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`
+          },
+          true
+        );
+      }
+
       const args = ["upload", resolvedSketchPath, "-p", port];
       if (fqbn) {
         args.push("--fqbn", fqbn);
@@ -1009,7 +1302,15 @@ server.registerTool(
           data: {
             sketchPath: resolvedSketchPath,
             port,
-            fqbn: fqbn ?? null
+            fqbn: fqbn ?? null,
+            coreId,
+            coreEnsure: coreEnsure
+              ? {
+                  installed: coreEnsure.installed,
+                  alreadyInstalled: coreEnsure.alreadyInstalled,
+                  autoInstallAttempted: coreEnsure.autoInstallAttempted
+                }
+              : null
           },
           raw,
           error: raw.ok ? undefined : withCliHint("Sketch upload failed.", raw)
