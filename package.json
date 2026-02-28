@@ -1,11 +1,11 @@
 {
   "name": "arduino-mcp-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Arduino CLI wrapper MCP server",
   "type": "module",
   "main": "build/index.js",
   "bin": {
-    "arduino-mcp-server": "./build/index.js"
+    "arduino-mcp-server": "build/index.js"
   },
   "files": [
     "build",
