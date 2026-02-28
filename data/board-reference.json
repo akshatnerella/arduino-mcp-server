@@ -1,0 +1,251 @@
+{
+  "version": "2026-02-28",
+  "boards": [
+    {
+      "id": "arduino_uno_r3",
+      "displayName": "Arduino Uno R3",
+      "aliases": ["uno", "uno r3", "atmega328p uno"],
+      "fqbnCandidates": ["arduino:avr:uno"],
+      "mcu": "ATmega328P",
+      "logicVoltage": "5V",
+      "operatingVoltage": "7-12V via VIN (recommended)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["RX"] },
+        { "name": "D1", "capabilities": ["TX"] },
+        { "name": "D2" },
+        { "name": "D3", "capabilities": ["PWM", "INT1"] },
+        { "name": "D4" },
+        { "name": "D5", "capabilities": ["PWM"] },
+        { "name": "D6", "capabilities": ["PWM"] },
+        { "name": "D7" },
+        { "name": "D8" },
+        { "name": "D9", "capabilities": ["PWM"] },
+        { "name": "D10", "capabilities": ["PWM", "SS"] },
+        { "name": "D11", "capabilities": ["PWM", "MOSI"] },
+        { "name": "D12", "capabilities": ["MISO"] },
+        { "name": "D13", "capabilities": ["SCK", "LED_BUILTIN"] }
+      ],
+      "analogPins": [
+        { "name": "A0" },
+        { "name": "A1" },
+        { "name": "A2" },
+        { "name": "A3" },
+        { "name": "A4", "capabilities": ["SDA"] },
+        { "name": "A5", "capabilities": ["SCL"] }
+      ],
+      "pwmPins": ["D3", "D5", "D6", "D9", "D10", "D11"],
+      "i2c": { "sda": "A4", "scl": "A5" },
+      "spi": { "miso": "D12", "mosi": "D11", "sck": "D13", "ss": "D10" },
+      "uart": { "hardware": ["D0", "D1"] },
+      "notes": [
+        "GPIO are 5V logic; use level shifting when interfacing with 3.3V-only sensors.",
+        "One hardware UART is shared with USB serial."
+      ],
+      "referenceLinks": [
+        "https://docs.arduino.cc/hardware/uno-rev3",
+        "https://store.arduino.cc/products/arduino-uno-rev3"
+      ]
+    },
+    {
+      "id": "arduino_nano_classic",
+      "displayName": "Arduino Nano (Classic)",
+      "aliases": ["nano", "nano atmega328p", "nano classic"],
+      "fqbnCandidates": ["arduino:avr:nano"],
+      "mcu": "ATmega328P",
+      "logicVoltage": "5V",
+      "operatingVoltage": "7-12V via VIN (recommended)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["RX"] },
+        { "name": "D1", "capabilities": ["TX"] },
+        { "name": "D2" },
+        { "name": "D3", "capabilities": ["PWM", "INT1"] },
+        { "name": "D4" },
+        { "name": "D5", "capabilities": ["PWM"] },
+        { "name": "D6", "capabilities": ["PWM"] },
+        { "name": "D7" },
+        { "name": "D8" },
+        { "name": "D9", "capabilities": ["PWM"] },
+        { "name": "D10", "capabilities": ["PWM", "SS"] },
+        { "name": "D11", "capabilities": ["PWM", "MOSI"] },
+        { "name": "D12", "capabilities": ["MISO"] },
+        { "name": "D13", "capabilities": ["SCK", "LED_BUILTIN"] }
+      ],
+      "analogPins": [
+        { "name": "A0" },
+        { "name": "A1" },
+        { "name": "A2" },
+        { "name": "A3" },
+        { "name": "A4", "capabilities": ["SDA"] },
+        { "name": "A5", "capabilities": ["SCL"] },
+        { "name": "A6", "capabilities": ["ADC_ONLY"] },
+        { "name": "A7", "capabilities": ["ADC_ONLY"] }
+      ],
+      "pwmPins": ["D3", "D5", "D6", "D9", "D10", "D11"],
+      "i2c": { "sda": "A4", "scl": "A5" },
+      "spi": { "miso": "D12", "mosi": "D11", "sck": "D13", "ss": "D10" },
+      "uart": { "hardware": ["D0", "D1"] },
+      "notes": [
+        "A6/A7 are analog input only on classic Nano variants."
+      ],
+      "referenceLinks": [
+        "https://docs.arduino.cc/hardware/nano"
+      ]
+    },
+    {
+      "id": "arduino_mega_2560_r3",
+      "displayName": "Arduino Mega 2560 Rev3",
+      "aliases": ["mega", "mega 2560", "mega2560"],
+      "fqbnCandidates": ["arduino:avr:mega"],
+      "mcu": "ATmega2560",
+      "logicVoltage": "5V",
+      "operatingVoltage": "7-12V via VIN (recommended)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["RX0"] },
+        { "name": "D1", "capabilities": ["TX0"] },
+        { "name": "D2", "capabilities": ["PWM"] },
+        { "name": "D3", "capabilities": ["PWM"] },
+        { "name": "D4", "capabilities": ["PWM"] },
+        { "name": "D5", "capabilities": ["PWM"] },
+        { "name": "D6", "capabilities": ["PWM"] },
+        { "name": "D7", "capabilities": ["PWM"] },
+        { "name": "D8", "capabilities": ["PWM"] },
+        { "name": "D9", "capabilities": ["PWM"] },
+        { "name": "D10", "capabilities": ["PWM"] },
+        { "name": "D11", "capabilities": ["PWM"] },
+        { "name": "D12", "capabilities": ["PWM"] },
+        { "name": "D13", "capabilities": ["PWM", "LED_BUILTIN"] }
+      ],
+      "analogPins": [
+        { "name": "A0" },
+        { "name": "A1" },
+        { "name": "A2" },
+        { "name": "A3" },
+        { "name": "A4" },
+        { "name": "A5" },
+        { "name": "A6" },
+        { "name": "A7" },
+        { "name": "A8" },
+        { "name": "A9" },
+        { "name": "A10" },
+        { "name": "A11" },
+        { "name": "A12" },
+        { "name": "A13" },
+        { "name": "A14" },
+        { "name": "A15" }
+      ],
+      "pwmPins": ["D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D44", "D45", "D46"],
+      "i2c": { "sda": "D20", "scl": "D21" },
+      "spi": { "miso": "D50", "mosi": "D51", "sck": "D52", "ss": "D53" },
+      "uart": { "hardware": ["D0/D1", "D19/D18", "D17/D16", "D15/D14"] },
+      "notes": [
+        "Multiple hardware UARTs are available for sensor modules and debugging."
+      ],
+      "referenceLinks": [
+        "https://docs.arduino.cc/hardware/mega-2560",
+        "https://store.arduino.cc/products/arduino-mega-2560-rev3"
+      ]
+    },
+    {
+      "id": "arduino_leonardo",
+      "displayName": "Arduino Leonardo",
+      "aliases": ["leonardo", "atmega32u4"],
+      "fqbnCandidates": ["arduino:avr:leonardo"],
+      "mcu": "ATmega32u4",
+      "logicVoltage": "5V",
+      "operatingVoltage": "7-12V via VIN (recommended)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["RX"] },
+        { "name": "D1", "capabilities": ["TX"] },
+        { "name": "D2", "capabilities": ["SDA"] },
+        { "name": "D3", "capabilities": ["PWM", "SCL"] },
+        { "name": "D4" },
+        { "name": "D5", "capabilities": ["PWM"] },
+        { "name": "D6", "capabilities": ["PWM"] },
+        { "name": "D7" },
+        { "name": "D8" },
+        { "name": "D9", "capabilities": ["PWM"] },
+        { "name": "D10", "capabilities": ["PWM"] },
+        { "name": "D11", "capabilities": ["PWM"] },
+        { "name": "D12" },
+        { "name": "D13", "capabilities": ["LED_BUILTIN"] }
+      ],
+      "analogPins": [
+        { "name": "A0" },
+        { "name": "A1" },
+        { "name": "A2" },
+        { "name": "A3" },
+        { "name": "A4" },
+        { "name": "A5" },
+        { "name": "A6" },
+        { "name": "A7" },
+        { "name": "A8" },
+        { "name": "A9" },
+        { "name": "A10" },
+        { "name": "A11" }
+      ],
+      "pwmPins": ["D3", "D5", "D6", "D9", "D10", "D11", "D13"],
+      "i2c": { "sda": "D2", "scl": "D3" },
+      "spi": { "miso": "ICSP-1", "mosi": "ICSP-4", "sck": "ICSP-3", "ss": "D10" },
+      "uart": { "hardware": ["D0", "D1"] },
+      "notes": [
+        "USB is native on ATmega32u4; serial port enumeration behavior differs from Uno/Nano."
+      ],
+      "referenceLinks": [
+        "https://docs.arduino.cc/hardware/leonardo"
+      ]
+    },
+    {
+      "id": "esp32_dev_module",
+      "displayName": "ESP32 Dev Module",
+      "aliases": ["esp32", "esp32 devkit", "esp32-wroom-32"],
+      "fqbnCandidates": ["esp32:esp32:esp32"],
+      "mcu": "ESP32",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V USB input, 3.3V logic",
+      "digitalPins": [
+        { "name": "GPIO0", "capabilities": ["BOOT_STRAP"] },
+        { "name": "GPIO1", "capabilities": ["TX0"] },
+        { "name": "GPIO2", "capabilities": ["BOOT_STRAP"] },
+        { "name": "GPIO3", "capabilities": ["RX0"] },
+        { "name": "GPIO4" },
+        { "name": "GPIO5", "capabilities": ["VSPI_CS"] },
+        { "name": "GPIO12", "capabilities": ["MTDI", "BOOT_STRAP"] },
+        { "name": "GPIO13", "capabilities": ["MTCK"] },
+        { "name": "GPIO14", "capabilities": ["MTMS"] },
+        { "name": "GPIO15", "capabilities": ["MTDO", "BOOT_STRAP"] },
+        { "name": "GPIO16" },
+        { "name": "GPIO17" },
+        { "name": "GPIO18", "capabilities": ["VSPI_SCK"] },
+        { "name": "GPIO19", "capabilities": ["VSPI_MISO"] },
+        { "name": "GPIO21", "capabilities": ["I2C_SDA"] },
+        { "name": "GPIO22", "capabilities": ["I2C_SCL"] },
+        { "name": "GPIO23", "capabilities": ["VSPI_MOSI"] },
+        { "name": "GPIO25", "capabilities": ["DAC1"] },
+        { "name": "GPIO26", "capabilities": ["DAC2"] },
+        { "name": "GPIO27" },
+        { "name": "GPIO32" },
+        { "name": "GPIO33" },
+        { "name": "GPIO34", "capabilities": ["INPUT_ONLY"] },
+        { "name": "GPIO35", "capabilities": ["INPUT_ONLY"] }
+      ],
+      "analogPins": [
+        { "name": "GPIO32", "capabilities": ["ADC1_CH4"] },
+        { "name": "GPIO33", "capabilities": ["ADC1_CH5"] },
+        { "name": "GPIO34", "capabilities": ["ADC1_CH6", "INPUT_ONLY"] },
+        { "name": "GPIO35", "capabilities": ["ADC1_CH7", "INPUT_ONLY"] }
+      ],
+      "pwmPins": ["GPIO2", "GPIO4", "GPIO5", "GPIO12", "GPIO13", "GPIO14", "GPIO15", "GPIO18", "GPIO19", "GPIO21", "GPIO22", "GPIO23", "GPIO25", "GPIO26", "GPIO27", "GPIO32", "GPIO33"],
+      "i2c": { "sda": "GPIO21", "scl": "GPIO22" },
+      "spi": { "miso": "GPIO19", "mosi": "GPIO23", "sck": "GPIO18", "ss": "GPIO5" },
+      "uart": { "hardware": ["GPIO1/GPIO3", "GPIO17/GPIO16"] },
+      "notes": [
+        "Logic is 3.3V only; do not drive pins with 5V.",
+        "Some GPIO are strapping pins and affect boot mode."
+      ],
+      "referenceLinks": [
+        "https://docs.espressif.com/projects/arduino-esp32/en/latest/",
+        "https://randomnerdtutorials.com/esp32-pinout-reference-gpios/"
+      ]
+    }
+  ]
+}
