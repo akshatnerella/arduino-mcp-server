@@ -40,10 +40,18 @@ export async function runArduinoCli(
   args: string[],
   timeoutMs = 60_000
 ): Promise<CommandResult> {
+  return runCommand(config.cliPath, args, timeoutMs);
+}
+
+export async function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 60_000
+): Promise<CommandResult> {
   const started = Date.now();
 
   return await new Promise<CommandResult>((resolve) => {
-    const child = spawn(config.cliPath, args, {
+    const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"]
     });
 
@@ -63,7 +71,7 @@ export async function runArduinoCli(
       const durationMs = Date.now() - started;
       resolve({
         ok: false,
-        command: config.cliPath,
+        command,
         args,
         code: null,
         stdout,
@@ -83,7 +91,7 @@ export async function runArduinoCli(
       const durationMs = Date.now() - started;
       resolve({
         ok: code === 0 && !timedOut,
-        command: config.cliPath,
+        command,
         args,
         code,
         stdout,

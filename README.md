@@ -4,6 +4,9 @@ Arduino MCP server that wraps `arduino-cli` so AI agents can discover boards/por
 ## Features
 - MCP tools for:
   - listing connected boards and serial ports
+  - detecting connected hardware with inferred FQBN and next commands
+  - checking `arduino-cli` availability with OS-specific install guidance (`arduino_cli_doctor`)
+  - auto-installing `arduino-cli` when missing (`install_arduino_cli`)
   - listing supported boards
   - compiling sketches
   - uploading sketches
@@ -16,6 +19,28 @@ Arduino MCP server that wraps `arduino-cli` so AI agents can discover boards/por
 ## Requirements
 - Node.js 20+
 - `arduino-cli` installed and available on `PATH` (or set `ARDUINO_CLI_PATH`)
+
+## Agent Workflow Contract
+Use this workflow in AI agents:
+1. Call `arduino_cli_doctor` first.
+2. If `installed=false`, call `install_arduino_cli` with `{"method":"auto"}`.
+3. If auto-install fails, use the returned OS-specific `installGuide`.
+4. Set `ARDUINO_CLI_PATH` if the binary is not on `PATH`.
+5. Re-run `arduino_cli_doctor` and continue only when `installed=true`.
+6. Only then call `detect_hardware`, `compile_sketch`, `upload_sketch`, etc.
+
+Do not attempt fallback hardware scans before `arduino-cli` is available.
+
+## Install Arduino CLI Quickly
+Official docs: https://docs.arduino.cc/arduino-cli/installation/
+
+- Windows (recommended): `winget install ArduinoSA.CLI`
+- macOS: `brew install arduino-cli`
+- Linux: `brew install arduino-cli` or official install script
+
+If needed, set `ARDUINO_CLI_PATH`:
+- PowerShell (current session): `$env:ARDUINO_CLI_PATH='C:\\path\\to\\arduino-cli.exe'`
+- Bash/Zsh (current session): `export ARDUINO_CLI_PATH=/absolute/path/to/arduino-cli`
 
 ## Install
 ```bash
@@ -63,4 +88,6 @@ You can expand this file or replace it with data from an external source later.
 ## MCP Capability Coverage
 - Tools: compile/upload/monitor/board discovery and reference lookup
 - Resource: `arduino://boards/reference` for board metadata
-- Prompt: `arduino-setup-assistant` template for wiring/setup guidance
+- Prompts:
+  - `arduino-cli-bootstrap-policy` for dependency/bootstrap behavior
+  - `arduino-setup-assistant` for wiring/setup guidance

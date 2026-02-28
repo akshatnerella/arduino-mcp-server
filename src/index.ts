@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { findBoardReference, listBoardReferences } from "./boardReference.js";
-import { resolveSketchPath, runArduinoCli, tryParseJson, type ArduinoCliConfig } from "./arduinoCli.js";
+import {
+  resolveSketchPath,
+  runArduinoCli,
+  runCommand,
+  tryParseJson,
+  type ArduinoCliConfig,
+  type CommandResult
+} from "./arduinoCli.js";
 
 const arduinoConfig: ArduinoCliConfig = {
   cliPath: process.env.ARDUINO_CLI_PATH ?? "arduino-cli",
@@ -57,6 +66,350 @@ function toUnhandledError(error: unknown) {
   );
 }
 
+interface InstallGuide {
+  docsUrl: string;
+  recommended: string[];
+  alternatives: string[];
+  notes?: string[];
+}
+
+interface EnvVarGuide {
+  windowsPowerShell: {
+    temporary: string;
+    persistentCurrentUser: string;
+  };
+  macOrLinuxBash: {
+    temporary: string;
+    persistentProfile: string;
+  };
+}
+
+function getArduinoCliInstallGuide(platform: NodeJS.Platform): InstallGuide {
+  const docsUrl = "https://docs.arduino.cc/arduino-cli/installation/";
+
+  if (platform === "win32") {
+    return {
+      docsUrl,
+      recommended: [
+        "winget install ArduinoSA.CLI",
+        "Download the official Windows x64 Arduino CLI package (.exe or .msi) from the installation page.",
+        "Install and ensure `arduino-cli` is on PATH, or set `ARDUINO_CLI_PATH` to the binary location."
+      ],
+      alternatives: [
+        "choco install arduino-cli",
+        "Use Git Bash and run the official install script: curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh"
+      ],
+      notes: [
+        "The install script requires `sh`, which is not present in default Windows PowerShell."
+      ]
+    };
+  }
+
+  if (platform === "darwin") {
+    return {
+      docsUrl,
+      recommended: ["brew update", "brew install arduino-cli"],
+      alternatives: [
+        "curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh"
+      ]
+    };
+  }
+
+  if (platform === "linux") {
+    return {
+      docsUrl,
+      recommended: ["brew update", "brew install arduino-cli"],
+      alternatives: [
+        "curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh"
+      ],
+      notes: [
+        "On Linux, either Homebrew or the official install script works. Ensure the installed binary path is on PATH."
+      ]
+    };
+  }
+
+  return {
+    docsUrl,
+    recommended: [
+      "Use the official Arduino CLI installation page to download the matching platform binary."
+    ],
+    alternatives: [],
+    notes: ["Set `ARDUINO_CLI_PATH` if the binary is not available on PATH."]
+  };
+}
+
+function getEnvVarGuide(): EnvVarGuide {
+  return {
+    windowsPowerShell: {
+      temporary: "$env:ARDUINO_CLI_PATH='C:\\path\\to\\arduino-cli.exe'",
+      persistentCurrentUser:
+        "[Environment]::SetEnvironmentVariable('ARDUINO_CLI_PATH','C:\\path\\to\\arduino-cli.exe','User')"
+    },
+    macOrLinuxBash: {
+      temporary: "export ARDUINO_CLI_PATH=/absolute/path/to/arduino-cli",
+      persistentProfile: "echo 'export ARDUINO_CLI_PATH=/absolute/path/to/arduino-cli' >> ~/.bashrc"
+    }
+  };
+}
+
+function parseArduinoCliVersion(rawOutput: string): string | null {
+  const match = rawOutput.match(/\b(\d+\.\d+\.\d+(?:[-+.\w]*)?)\b/);
+  return match ? match[1] : null;
+}
+
+function isLikelyMissingCli(raw: CommandResult): boolean {
+  if (raw.ok) {
+    return false;
+  }
+  const combined = `${raw.stderr}\n${raw.stdout}`.toLowerCase();
+  return (
+    raw.code === null &&
+    (combined.includes("enoent") ||
+      combined.includes("not recognized") ||
+      combined.includes("no such file") ||
+      combined.includes("cannot find"))
+  );
+}
+
+function withCliHint(baseMessage: string, raw: CommandResult): string {
+  if (!isLikelyMissingCli(raw)) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} Arduino CLI appears missing. Run \`arduino_cli_doctor\`, then \`install_arduino_cli\` (method=auto), set \`ARDUINO_CLI_PATH\` if needed, then retry. Do not use fallback hardware scans before CLI is installed.`;
+}
+
+type InstallMethod = "auto" | "winget" | "choco" | "brew" | "script";
+
+interface InstallStrategy {
+  method: Exclude<InstallMethod, "auto">;
+  command: string;
+  args: string[];
+  requires?: string;
+}
+
+interface InstallAttempt {
+  method: string;
+  command: string;
+  args: string[];
+  skipped?: boolean;
+  skipReason?: string;
+  result?: CommandResult;
+}
+
+function summarizeCommandResult(result: CommandResult) {
+  return {
+    ok: result.ok,
+    command: result.command,
+    args: result.args,
+    code: result.code,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    stdoutTail: result.stdout.trim().slice(-5000),
+    stderrTail: result.stderr.trim().slice(-5000)
+  };
+}
+
+async function isCommandAvailable(commandName: string): Promise<boolean> {
+  const checker = process.platform === "win32" ? "where" : "which";
+  const result = await runCommand(checker, [commandName], 10_000);
+  return result.ok;
+}
+
+function buildInstallStrategies(platform: NodeJS.Platform, method: InstallMethod): InstallStrategy[] {
+  const all: InstallStrategy[] = [];
+
+  if (platform === "win32") {
+    all.push({
+      method: "winget",
+      command: "winget",
+      args: ["install", "--id", "ArduinoSA.CLI", "-e", "--accept-source-agreements", "--accept-package-agreements"],
+      requires: "winget"
+    });
+    all.push({
+      method: "choco",
+      command: "choco",
+      args: ["install", "arduino-cli", "-y"],
+      requires: "choco"
+    });
+  } else if (platform === "darwin" || platform === "linux") {
+    all.push({
+      method: "brew",
+      command: "brew",
+      args: ["install", "arduino-cli"],
+      requires: "brew"
+    });
+    all.push({
+      method: "script",
+      command: "sh",
+      args: ["-c", "curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh"],
+      requires: "sh"
+    });
+  }
+
+  if (method === "auto") {
+    return all;
+  }
+  return all.filter((strategy) => strategy.method === method);
+}
+
+async function findArduinoCliExecutable(): Promise<string | null> {
+  const directCandidates = [arduinoConfig.cliPath, "arduino-cli"];
+  for (const candidate of directCandidates) {
+    const res = await runCommand(candidate, ["version"], 10_000);
+    if (res.ok) {
+      return candidate;
+    }
+  }
+
+  const locator = process.platform === "win32" ? "where" : "which";
+  const located = await runCommand(locator, ["arduino-cli"], 10_000);
+  if (located.ok) {
+    const firstPath = located.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    if (firstPath) {
+      return firstPath;
+    }
+  }
+
+  const candidates: string[] = [];
+  if (process.platform === "win32") {
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(path.join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "arduino-cli.exe"));
+    }
+    if (process.env.ProgramData) {
+      candidates.push(path.join(process.env.ProgramData, "chocolatey", "bin", "arduino-cli.exe"));
+    }
+    candidates.push("C:\\Program Files\\Arduino CLI\\arduino-cli.exe");
+  } else {
+    candidates.push("/usr/local/bin/arduino-cli");
+    candidates.push("/opt/homebrew/bin/arduino-cli");
+    candidates.push("/home/linuxbrew/.linuxbrew/bin/arduino-cli");
+    if (process.env.HOME) {
+      candidates.push(path.join(process.env.HOME, "bin", "arduino-cli"));
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) {
+      continue;
+    }
+    const res = await runCommand(candidate, ["version"], 10_000);
+    if (res.ok) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as JsonRecord;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+interface DetectedBoardCandidate {
+  name?: string;
+  fqbn?: string;
+}
+
+interface NormalizedPortEntry {
+  address?: string;
+  protocol?: string;
+  label?: string;
+  hardwareId?: string;
+  properties: JsonRecord[];
+  detectedBoardCandidates: DetectedBoardCandidate[];
+}
+
+function normalizeBoardListEntries(payload: unknown): JsonRecord[] {
+  if (Array.isArray(payload)) {
+    return payload.map(asRecord).filter((entry): entry is JsonRecord => entry !== null);
+  }
+
+  const root = asRecord(payload);
+  if (!root) {
+    return [];
+  }
+
+  const detectedPorts = asArray(root.detected_ports);
+  if (detectedPorts.length > 0) {
+    return detectedPorts.map(asRecord).filter((entry): entry is JsonRecord => entry !== null);
+  }
+
+  const ports = asArray(root.ports);
+  if (ports.length > 0) {
+    return ports.map(asRecord).filter((entry): entry is JsonRecord => entry !== null);
+  }
+
+  return [];
+}
+
+function normalizePortEntry(entry: JsonRecord): NormalizedPortEntry {
+  const port = asRecord(entry.port) ?? entry;
+
+  const candidates: DetectedBoardCandidate[] = [];
+  const matchingBoards = asArray(entry.matching_boards);
+  const listedBoards = asArray(entry.boards);
+  const allBoards = [...matchingBoards, ...listedBoards];
+
+  for (const rawBoard of allBoards) {
+    const board = asRecord(rawBoard);
+    if (!board) {
+      continue;
+    }
+    const name = asString(board.name);
+    const fqbn = asString(board.fqbn);
+    if (name || fqbn) {
+      candidates.push({ name, fqbn });
+    }
+  }
+
+  const entryFqbn = asString(entry.fqbn);
+  const entryName = asString(entry.name);
+  if (entryFqbn || entryName) {
+    candidates.push({ name: entryName, fqbn: entryFqbn });
+  }
+
+  const dedupedCandidates: DetectedBoardCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.fqbn ?? ""}|${candidate.name ?? ""}`.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    dedupedCandidates.push(candidate);
+  }
+
+  const properties = asArray(port.properties)
+    .map(asRecord)
+    .filter((prop): prop is JsonRecord => prop !== null);
+
+  return {
+    address: asString(port.address) ?? asString(entry.address),
+    protocol: asString(port.protocol) ?? asString(entry.protocol),
+    label: asString(port.label) ?? asString(entry.label),
+    hardwareId: asString(port.hardware_id) ?? asString(entry.hardware_id),
+    properties,
+    detectedBoardCandidates: dedupedCandidates
+  };
+}
+
 const server = new McpServer({
   name: "arduino-mcp-server",
   version: "0.2.0"
@@ -83,9 +436,218 @@ server.registerTool(
           command: "board list",
           data: parsed,
           raw,
-          error: raw.ok ? undefined : "arduino-cli board list failed."
+          error: raw.ok ? undefined : withCliHint("arduino-cli board list failed.", raw)
         },
         !raw.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "arduino_cli_doctor",
+  {
+    title: "Arduino CLI Doctor",
+    description:
+      "Check whether arduino-cli is available and return OS-specific installation instructions if missing.",
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async () => {
+    try {
+      const raw = await runArduinoCli(arduinoConfig, ["version"], 15_000);
+      const guide = getArduinoCliInstallGuide(process.platform);
+      const envVarGuide = getEnvVarGuide();
+      const rawVersionOutput = raw.stdout.trim() || raw.stderr.trim() || null;
+      const parsedVersion = rawVersionOutput ? parseArduinoCliVersion(rawVersionOutput) : null;
+      const installed = raw.ok;
+
+      return toToolResult({
+        ok: installed,
+        command: "version",
+        data: {
+          cliPath: arduinoConfig.cliPath,
+          platform: process.platform,
+          arch: process.arch,
+          requiredDependency: {
+            name: "arduino-cli",
+            required: true,
+            installed
+          },
+          installed,
+          version: installed ? parsedVersion : null,
+          rawVersionOutput,
+          installGuide: guide,
+          envVarGuide,
+          agentRequiredWorkflow: installed
+            ? [
+                "Proceed with detect_hardware.",
+                "Use compile_sketch and upload_sketch for build/deploy."
+              ]
+            : [
+                "Stop workflows that depend on arduino-cli.",
+                "Call install_arduino_cli (method=auto).",
+                "If install tool fails, install arduino-cli using installGuide.",
+                "If binary is not on PATH, set ARDUINO_CLI_PATH using envVarGuide.",
+                "Restart the MCP server session if environment changed.",
+                "Re-run arduino_cli_doctor and require installed=true.",
+                "Then run detect_hardware."
+              ],
+          strictPolicy: {
+            noFallbackHardwareScanWithoutCli: true,
+            reason:
+              "Board/FQBN resolution and Arduino workflows must come from arduino-cli for reliable behavior."
+          },
+          postInstallChecks: [
+            "arduino-cli version",
+            "arduino-cli core update-index",
+            "arduino-cli board list --format json"
+          ],
+          nextRecommendedToolCall: "detect_hardware"
+        },
+        raw,
+        note: installed
+          ? "Arduino CLI is available."
+          : "Arduino CLI is not available. Install it, set ARDUINO_CLI_PATH if needed, and re-run this tool.",
+        error: installed ? undefined : withCliHint("arduino-cli version check failed.", raw)
+      });
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "install_arduino_cli",
+  {
+    title: "Install Arduino CLI",
+    description:
+      "Attempt to install arduino-cli for the current OS using available package managers, then verify and configure CLI path.",
+    inputSchema: {
+      method: z
+        .enum(["auto", "winget", "choco", "brew", "script"])
+        .optional()
+        .describe("Install method. Default `auto` tries OS-relevant methods in order."),
+      setCliPathInProcess: z
+        .boolean()
+        .optional()
+        .describe("If true (default), set ARDUINO_CLI_PATH in this MCP process after install.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true
+    }
+  },
+  async ({ method = "auto", setCliPathInProcess = true }) => {
+    try {
+      const selectedMethod = method as InstallMethod;
+      const strategies = buildInstallStrategies(process.platform, selectedMethod);
+      if (strategies.length === 0) {
+        return toToolResult(
+          {
+            ok: false,
+            command: "install_arduino_cli",
+            data: {
+              platform: process.platform,
+              selectedMethod
+            },
+            error: "No supported install strategy for this platform/method."
+          },
+          true
+        );
+      }
+
+      const attempts: InstallAttempt[] = [];
+      let lastResult: CommandResult | undefined;
+      let installAttempted = false;
+
+      for (const strategy of strategies) {
+        if (strategy.requires) {
+          const available = await isCommandAvailable(strategy.requires);
+          if (!available) {
+            attempts.push({
+              method: strategy.method,
+              command: strategy.command,
+              args: strategy.args,
+              skipped: true,
+              skipReason: `Required command not found: ${strategy.requires}`
+            });
+            continue;
+          }
+        }
+
+        installAttempted = true;
+        const result = await runCommand(strategy.command, strategy.args, 600_000);
+        attempts.push({
+          method: strategy.method,
+          command: strategy.command,
+          args: strategy.args,
+          result
+        });
+        lastResult = result;
+
+        if (result.ok) {
+          break;
+        }
+      }
+
+      const resolvedCliPath = await findArduinoCliExecutable();
+      if (resolvedCliPath && setCliPathInProcess) {
+        arduinoConfig.cliPath = resolvedCliPath;
+        process.env.ARDUINO_CLI_PATH = resolvedCliPath;
+      }
+
+      const verify = await runArduinoCli(arduinoConfig, ["version"], 20_000);
+      const installed = verify.ok;
+      const versionOutput = verify.stdout.trim() || verify.stderr.trim() || null;
+      const parsedVersion = versionOutput ? parseArduinoCliVersion(versionOutput) : null;
+
+      const attemptSummaries = attempts.map((attempt) => ({
+        method: attempt.method,
+        command: attempt.command,
+        args: attempt.args,
+        skipped: attempt.skipped ?? false,
+        skipReason: attempt.skipReason,
+        result: attempt.result ? summarizeCommandResult(attempt.result) : undefined
+      }));
+
+      return toToolResult(
+        {
+          ok: installed,
+          command: "install_arduino_cli",
+          data: {
+            platform: process.platform,
+            selectedMethod,
+            installAttempted,
+            attempts: attemptSummaries,
+            resolvedCliPath,
+            cliPathInUse: arduinoConfig.cliPath,
+            setCliPathInProcess,
+            installed,
+            version: installed ? parsedVersion : null,
+            versionOutput
+          },
+          raw: verify,
+          note: installed
+            ? "Arduino CLI installation verified. You can run detect_hardware now."
+            : "Installation was not verified. Review attempts and run arduino_cli_doctor.",
+          error:
+            installed || !lastResult
+              ? undefined
+              : withCliHint(
+                  "Failed to install or verify arduino-cli automatically.",
+                  verify.ok ? lastResult : verify
+                )
+        },
+        !installed
       );
     } catch (error) {
       return toUnhandledError(error);
@@ -128,10 +690,156 @@ server.registerTool(
             boards: filtered
           },
           raw,
-          error: raw.ok ? undefined : "arduino-cli board listall failed."
+          error: raw.ok ? undefined : withCliHint("arduino-cli board listall failed.", raw)
         },
         !raw.ok
       );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "detect_hardware",
+  {
+    title: "Detect Hardware",
+    description:
+      "Detect connected Arduino-compatible hardware, infer board/FQBN candidates, and generate next compile/upload commands.",
+    inputSchema: {
+      port: z.string().optional().describe("Optional exact port filter, e.g. COM6 or /dev/ttyACM0."),
+      includeBoardDetails: z
+        .boolean()
+        .optional()
+        .describe("If true, query `arduino-cli board details` for selected FQBN candidates.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ port, includeBoardDetails = false }) => {
+    try {
+      const raw = await runArduinoCli(arduinoConfig, ["board", "list", "--format", "json"]);
+      const parsed = tryParseJson<unknown>(raw.stdout);
+
+      if (!raw.ok) {
+      return toToolResult(
+        {
+          ok: false,
+          command: "board list",
+          raw,
+          error: withCliHint("arduino-cli board list failed.", raw)
+        },
+        true
+      );
+      }
+
+      const entries = normalizeBoardListEntries(parsed);
+      const normalized = entries.map(normalizePortEntry);
+
+      const filtered = port
+        ? normalized.filter(
+            (entry) => entry.address && entry.address.toLowerCase() === port.trim().toLowerCase()
+          )
+        : normalized;
+
+      const boardDetailsCache = new Map<string, unknown>();
+
+      const ports = [];
+      for (const entry of filtered) {
+        const selectedCandidateWithFqbn = entry.detectedBoardCandidates.find((candidate) => candidate.fqbn);
+        const selectedBoardName = selectedCandidateWithFqbn?.name ?? entry.detectedBoardCandidates[0]?.name;
+        const selectedFqbn = selectedCandidateWithFqbn?.fqbn;
+
+        const referenceQuery = selectedFqbn ?? selectedBoardName;
+        const referenceMatches = referenceQuery ? findBoardReference(referenceQuery) : [];
+        const referenceSuggestions = referenceMatches.map((match) => ({
+          id: match.id,
+          displayName: match.displayName,
+          fqbnCandidates: match.fqbnCandidates
+        }));
+
+        const inferredFqbn = selectedFqbn ?? referenceMatches[0]?.fqbnCandidates?.[0];
+
+        let boardDetails: unknown = undefined;
+        if (includeBoardDetails && inferredFqbn) {
+          if (boardDetailsCache.has(inferredFqbn)) {
+            boardDetails = boardDetailsCache.get(inferredFqbn);
+          } else {
+            const detailsRaw = await runArduinoCli(
+              arduinoConfig,
+              ["board", "details", "--fqbn", inferredFqbn, "--format", "json"],
+              120_000
+            );
+            const detailsParsed = tryParseJson<unknown>(detailsRaw.stdout);
+            boardDetails = detailsRaw.ok
+              ? { ok: true, details: detailsParsed }
+              : {
+                  ok: false,
+                  error: detailsRaw.stderr || "Failed to fetch board details."
+                };
+            boardDetailsCache.set(inferredFqbn, boardDetails);
+          }
+        }
+
+        const address = entry.address ?? null;
+
+        ports.push({
+          address,
+          protocol: entry.protocol ?? null,
+          label: entry.label ?? null,
+          hardwareId: entry.hardwareId ?? null,
+          properties: entry.properties,
+          detectedBoardCandidates: entry.detectedBoardCandidates,
+          selectedBoardName: selectedBoardName ?? null,
+          selectedFqbn: inferredFqbn ?? null,
+          referenceSuggestions,
+          boardDetails,
+          nextCommands:
+            address && inferredFqbn
+              ? {
+                  compile: `arduino-cli compile --fqbn ${inferredFqbn} <sketchPath>`,
+                  upload: `arduino-cli upload -p ${address} --fqbn ${inferredFqbn} <sketchPath>`
+                }
+              : null,
+          nextToolCalls:
+            address && inferredFqbn
+              ? {
+                  compile_sketch: {
+                    sketchPath: "<sketchPath>",
+                    fqbn: inferredFqbn
+                  },
+                  upload_sketch: {
+                    sketchPath: "<sketchPath>",
+                    port: address,
+                    fqbn: inferredFqbn
+                  }
+                }
+              : null
+        });
+      }
+
+      const summary = {
+        requestedPort: port ?? null,
+        includeBoardDetails,
+        totalDetectedPorts: ports.length,
+        portsWithBoardCandidate: ports.filter(
+          (entry) => Array.isArray(entry.detectedBoardCandidates) && entry.detectedBoardCandidates.length > 0
+        ).length,
+        portsReadyForCompileUpload: ports.filter((entry) => entry.address && entry.selectedFqbn).length
+      };
+
+      return toToolResult({
+        ok: true,
+        command: includeBoardDetails ? "board list + board details" : "board list",
+        data: {
+          summary,
+          ports
+        },
+        raw
+      });
     } catch (error) {
       return toUnhandledError(error);
     }
@@ -160,7 +868,7 @@ server.registerTool(
           command: "board list",
           data: parsed,
           raw,
-          error: raw.ok ? undefined : "arduino-cli board list failed."
+          error: raw.ok ? undefined : withCliHint("arduino-cli board list failed.", raw)
         },
         !raw.ok
       );
@@ -219,7 +927,7 @@ server.registerTool(
             fqbn
           },
           raw,
-          error: raw.ok ? undefined : "Sketch compilation failed."
+          error: raw.ok ? undefined : withCliHint("Sketch compilation failed.", raw)
         },
         !raw.ok
       );
@@ -270,7 +978,7 @@ server.registerTool(
             fqbn: fqbn ?? null
           },
           raw,
-          error: raw.ok ? undefined : "Sketch upload failed."
+          error: raw.ok ? undefined : withCliHint("Sketch upload failed.", raw)
         },
         !raw.ok
       );
@@ -319,7 +1027,7 @@ server.registerTool(
             ? "Capture stopped at timeout (expected for snapshot mode)."
             : "Monitor exited before timeout.",
           raw,
-          error: ok ? undefined : "Serial monitor failed."
+          error: ok ? undefined : withCliHint("Serial monitor failed.", raw)
         },
         !ok
       );
@@ -356,7 +1064,7 @@ server.registerTool(
             details: parsed
           },
           raw,
-          error: raw.ok ? undefined : "arduino-cli board details failed."
+          error: raw.ok ? undefined : withCliHint("arduino-cli board details failed.", raw)
         },
         !raw.ok
       );
@@ -448,6 +1156,48 @@ server.registerResource(
             null,
             2
           )
+        }
+      ]
+    };
+  }
+);
+
+server.registerPrompt(
+  "arduino-cli-bootstrap-policy",
+  {
+    title: "Arduino CLI Bootstrap Policy",
+    description: "Strict setup policy for agents when Arduino CLI is missing.",
+    argsSchema: {
+      platform: z.string().optional().describe("Optional platform hint, e.g. win32, darwin, linux.")
+    }
+  },
+  async ({ platform }) => {
+    const detectedPlatform = platform?.trim() || process.platform;
+    const guide = getArduinoCliInstallGuide(process.platform);
+    const envVarGuide = getEnvVarGuide();
+
+    return {
+      description: "Agent policy for bootstrapping Arduino CLI dependency.",
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              "Follow this strict policy:",
+              "1) Run arduino_cli_doctor first.",
+              "2) If installed=false, run install_arduino_cli with method=auto.",
+              "3) If install_arduino_cli fails, then use manual install instructions.",
+              "4) If binary is not on PATH, set ARDUINO_CLI_PATH.",
+              "5) Re-run arduino_cli_doctor until installed=true.",
+              "6) Only then run detect_hardware/compile/upload.",
+              "7) Do not run fallback non-arduino-cli hardware scans.",
+              "",
+              `Platform hint: ${detectedPlatform}`,
+              `Install guide: ${JSON.stringify(guide, null, 2)}`,
+              `Env var guide: ${JSON.stringify(envVarGuide, null, 2)}`
+            ].join("\n")
+          }
         }
       ]
     };
