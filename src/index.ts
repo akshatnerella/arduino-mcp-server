@@ -762,6 +762,8 @@ server.registerTool(
         }));
 
         const inferredFqbn = selectedFqbn ?? referenceMatches[0]?.fqbnCandidates?.[0];
+        const hasKnownReference = referenceSuggestions.length > 0;
+        const requiresUserBoardConfirmation = !inferredFqbn || !hasKnownReference;
 
         let boardDetails: unknown = undefined;
         if (includeBoardDetails && inferredFqbn) {
@@ -785,6 +787,9 @@ server.registerTool(
         }
 
         const address = entry.address ?? null;
+        const detectedHints = entry.detectedBoardCandidates
+          .map((candidate) => candidate.fqbn ?? candidate.name)
+          .filter((value): value is string => Boolean(value));
 
         ports.push({
           address,
@@ -795,8 +800,32 @@ server.registerTool(
           detectedBoardCandidates: entry.detectedBoardCandidates,
           selectedBoardName: selectedBoardName ?? null,
           selectedFqbn: inferredFqbn ?? null,
+          detectionConfidence: requiresUserBoardConfirmation ? "low" : "high",
+          requiresUserBoardConfirmation,
           referenceSuggestions,
           boardDetails,
+          agentAction: requiresUserBoardConfirmation
+            ? {
+                type: "ask_user",
+                reason: !inferredFqbn
+                  ? "Board type could not be inferred from detected port data."
+                  : "Board seems non-standard or not in local standard board references.",
+                question:
+                  address
+                    ? `I detected a device on ${address}. Which board model are you using (for example: Arduino Uno R3, Nano, Mega 2560, ESP32 Dev Module)?`
+                    : "I detected a serial device but cannot identify the board model. Which board are you using?",
+                requestedFields: ["boardModel", "fqbnIfKnown"],
+                hintsFromDetection: detectedHints,
+                ifUserUnsureThen: [
+                  "Try unplug/replug and run detect_hardware again to isolate the target port.",
+                  "Run list_supported_boards with a search string based on likely board family.",
+                  "Attempt upload with a likely FQBN and check for a successful handshake."
+                ]
+              }
+            : {
+                type: "continue",
+                reason: "Board and FQBN have sufficient confidence for compile/upload workflow."
+              },
           nextCommands:
             address && inferredFqbn
               ? {
@@ -828,7 +857,12 @@ server.registerTool(
         portsWithBoardCandidate: ports.filter(
           (entry) => Array.isArray(entry.detectedBoardCandidates) && entry.detectedBoardCandidates.length > 0
         ).length,
-        portsReadyForCompileUpload: ports.filter((entry) => entry.address && entry.selectedFqbn).length
+        portsReadyForCompileUpload: ports.filter((entry) => entry.address && entry.selectedFqbn).length,
+        unresolvedPorts: ports.filter((entry) => entry.requiresUserBoardConfirmation).length,
+        requiresUserInput: ports.some((entry) => entry.requiresUserBoardConfirmation),
+        nextAgentStep: ports.some((entry) => entry.requiresUserBoardConfirmation)
+          ? "Ask user to confirm board model/FQBN for unresolved ports before compile/upload."
+          : "Proceed to compile_sketch and upload_sketch."
       };
 
       return toToolResult({

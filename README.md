@@ -31,6 +31,10 @@ Use this workflow in AI agents:
 
 Do not attempt fallback hardware scans before `arduino-cli` is available.
 
+When `detect_hardware` returns unresolved/non-standard board matches, the tool now includes
+`requiresUserBoardConfirmation` and an `agentAction` question payload. Agents should ask the user
+to confirm board model/FQBN before continuing.
+
 ## Install Arduino CLI Quickly
 Official docs: https://docs.arduino.cc/arduino-cli/installation/
 
