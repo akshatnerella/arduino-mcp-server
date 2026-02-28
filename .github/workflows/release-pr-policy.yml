@@ -1,0 +1,319 @@
+name: Release PR Policy
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  require-release-source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce release/* source branch for main
+        run: |
+          echo "Base branch: ${{ github.base_ref }}"
+          echo "Head branch: ${{ github.head_ref }}"
+          if [[ ! "${{ github.head_ref }}" =~ ^release/ ]]; then
+            echo "Only release/* branches may be merged into main."
+            exit 1
+          fi
+
+  validate-release-version:
+    needs: require-release-source-branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base commit for version comparison
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git remote add upstream "https://github.com/${{ github.repository }}.git"
+          git fetch --no-tags upstream "$BASE_SHA" || true
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=2000 upstream "${{ github.base_ref }}"
+          fi
+          git cat-file -e "$BASE_SHA^{commit}"
+
+      - name: Auto-bump versions from PR label
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const { execSync } = require("node:child_process");
+
+          const baseSha = process.env.BASE_SHA;
+          const headRef = process.env.HEAD_REF || "";
+          const labels = JSON.parse(process.env.PR_LABELS_JSON || "[]").map((l) => String(l).toLowerCase());
+
+          const inferExpectedBumpFromLabels = (allLabels) => {
+            const normalized = new Set(allLabels);
+            const candidates = [
+              ["major", ["major", "release:major", "release/major", "version:major", "version/major"]],
+              ["minor", ["minor", "release:minor", "release/minor", "version:minor", "version/minor"]],
+              ["patch", ["patch", "release:patch", "release/patch", "version:patch", "version/patch"]]
+            ];
+            const matched = candidates
+              .filter(([, keys]) => keys.some((k) => normalized.has(k)))
+              .map(([name]) => name);
+            if (matched.length !== 1) {
+              return { expected: null, matched };
+            }
+            return { expected: matched[0], matched };
+          };
+
+          const bump = (baseVersion, bumpType) => {
+            const [core] = baseVersion.split("-", 1);
+            const [major, minor, patch] = core.split(".").map((n) => Number.parseInt(n, 10));
+            if (bumpType === "major") return `${major + 1}.0.0`;
+            if (bumpType === "minor") return `${major}.${minor + 1}.0`;
+            return `${major}.${minor}.${patch + 1}`;
+          };
+
+          const { expected } = inferExpectedBumpFromLabels(labels);
+          if (!expected) {
+            console.log("No single valid bump label found. Skipping auto-bump.");
+            process.exit(0);
+          }
+
+          const basePkg = JSON.parse(execSync(`git show ${baseSha}:package.json`, { encoding: "utf8" }));
+          const targetVersion = bump(basePkg.version, expected);
+
+          const pkgPath = "package.json";
+          const serverPath = "server.json";
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          const server = JSON.parse(fs.readFileSync(serverPath, "utf8"));
+
+          const matchingPackage = Array.isArray(server.packages)
+            ? server.packages.find((p) => p.identifier === pkg.name) ?? server.packages[0]
+            : null;
+
+          const alreadyAligned =
+            pkg.version === targetVersion &&
+            server.version === targetVersion &&
+            matchingPackage &&
+            matchingPackage.version === targetVersion;
+
+          if (alreadyAligned) {
+            console.log(`Versions already aligned to ${targetVersion}. No auto-bump needed.`);
+            process.exit(0);
+          }
+
+          console.log(`Auto-bumping versions to ${targetVersion} from label ${expected}.`);
+          execSync(`npm version ${targetVersion} --no-git-tag-version`, { stdio: "inherit" });
+
+          const updatedServer = JSON.parse(fs.readFileSync(serverPath, "utf8"));
+          updatedServer.version = targetVersion;
+          if (Array.isArray(updatedServer.packages) && updatedServer.packages.length > 0) {
+            const idx = updatedServer.packages.findIndex((p) => p.identifier === pkg.name);
+            const packageIndex = idx >= 0 ? idx : 0;
+            updatedServer.packages[packageIndex].version = targetVersion;
+          }
+          fs.writeFileSync(serverPath, `${JSON.stringify(updatedServer, null, 2)}\n`);
+
+          execSync('git config user.name "github-actions[bot]"');
+          execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
+          execSync("git add package.json package-lock.json server.json");
+
+          try {
+            execSync("git diff --cached --quiet");
+            console.log("No changes staged after auto-bump.");
+            process.exit(0);
+          } catch {
+            // staged changes exist
+          }
+
+          execSync(`git commit -m "chore(release): auto-bump version to ${targetVersion} from ${expected} label [skip ci]"`, { stdio: "inherit" });
+          execSync(`git push origin HEAD:${headRef}`, { stdio: "inherit" });
+          NODE
+
+      - name: Validate release version policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          node <<'NODE'
+          const { execSync } = require("node:child_process");
+          const fs = require("node:fs");
+
+          const baseSha = process.env.BASE_SHA;
+          const headRef = process.env.HEAD_REF || "";
+          const labels = JSON.parse(process.env.PR_LABELS_JSON || "[]").map((l) => String(l).toLowerCase());
+
+          const readVersionFromCommit = (sha, filePath) => {
+            const content = execSync(`git show ${sha}:${filePath}`, { encoding: "utf8" });
+            const parsed = JSON.parse(content);
+            return parsed.version;
+          };
+
+          const normalize = (value) => {
+            if (typeof value !== "string") {
+              return null;
+            }
+            const v = value.trim();
+            const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+            return semverPattern.test(v) ? v : null;
+          };
+
+          const parse = (value) => {
+            const [core, pre = ""] = value.split("-", 2);
+            const [major, minor, patch] = core.split(".").map((n) => Number.parseInt(n, 10));
+            return { major, minor, patch, pre };
+          };
+
+          const compareVersions = (a, b) => {
+            const pa = parse(a);
+            const pb = parse(b);
+
+            if (pa.major !== pb.major) return pa.major - pb.major;
+            if (pa.minor !== pb.minor) return pa.minor - pb.minor;
+            if (pa.patch !== pb.patch) return pa.patch - pb.patch;
+
+            const aPre = pa.pre;
+            const bPre = pb.pre;
+            if (!aPre && !bPre) return 0;
+            if (!aPre) return 1;
+            if (!bPre) return -1;
+            return aPre.localeCompare(bPre);
+          };
+
+          const bumpType = (base, head) => {
+            const b = parse(base);
+            const h = parse(head);
+
+            if (h.major > b.major) return "major";
+            if (h.major < b.major) return "invalid";
+
+            if (h.minor > b.minor) return "minor";
+            if (h.minor < b.minor) return "invalid";
+
+            if (h.patch > b.patch) return "patch";
+            if (h.patch < b.patch) return "invalid";
+
+            if (h.pre !== b.pre) return "prerelease";
+            return "none";
+          };
+
+          const inferExpectedBumpFromLabels = (allLabels) => {
+            const normalized = new Set(allLabels);
+            const candidates = [
+              ["major", ["major", "release:major", "release/major", "version:major", "version/major"]],
+              ["minor", ["minor", "release:minor", "release/minor", "version:minor", "version/minor"]],
+              ["patch", ["patch", "release:patch", "release/patch", "version:patch", "version/patch"]]
+            ];
+
+            const matched = candidates
+              .filter(([, keys]) => keys.some((k) => normalized.has(k)))
+              .map(([name]) => name);
+
+            if (matched.length !== 1) {
+              return { expected: null, matched };
+            }
+
+            return { expected: matched[0], matched };
+          };
+
+          const baseVersionRaw = readVersionFromCommit(baseSha, "package.json");
+          const headPkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const baseServerVersionRaw = readVersionFromCommit(baseSha, "server.json");
+          const headServer = JSON.parse(fs.readFileSync("server.json", "utf8"));
+          const headVersionRaw = headPkg.version;
+          const headServerVersionRaw = headServer.version;
+          const headServerPackageVersion = (() => {
+            const targetPkg = Array.isArray(headServer.packages)
+              ? headServer.packages.find((p) => p.identifier === headPkg.name) ?? headServer.packages[0]
+              : null;
+            return targetPkg?.version;
+          })();
+
+          const baseVersion = normalize(baseVersionRaw);
+          const headVersion = normalize(headVersionRaw);
+          const baseServerVersion = normalize(baseServerVersionRaw);
+          const headServerVersion = normalize(headServerVersionRaw);
+          const headServerPkgVersion = normalize(headServerPackageVersion);
+
+          const errors = [];
+
+          if (!baseVersion) {
+            errors.push(`Base package.json version is invalid semver: ${String(baseVersionRaw)}`);
+          }
+          if (!headVersion) {
+            errors.push(`Head package.json version is invalid semver: ${String(headVersionRaw)}`);
+          }
+          if (!headServerVersion) {
+            errors.push(`Head server.json version is invalid semver: ${String(headServerVersionRaw)}`);
+          }
+          if (!headServerPkgVersion) {
+            errors.push(`Head server.json packages[0].version is invalid semver: ${String(headServerPackageVersion)}`);
+          }
+
+          if (!baseServerVersion) {
+            errors.push(`Base server.json version is invalid semver: ${String(baseServerVersionRaw)}`);
+          }
+
+          if (headVersion && headServerVersion && headVersion !== headServerVersion) {
+            errors.push(`package.json version (${headVersion}) must match server.json version (${headServerVersion}).`);
+          }
+          if (headVersion && headServerPkgVersion && headVersion !== headServerPkgVersion) {
+            errors.push(`package.json version (${headVersion}) must match server.json packages[0].version (${headServerPkgVersion}).`);
+          }
+
+          if (baseVersion && headVersion) {
+            if (compareVersions(headVersion, baseVersion) <= 0) {
+              errors.push(`Release version must increase. Base is ${baseVersion}, head is ${headVersion}.`);
+            }
+          }
+
+          const { expected: expectedBump, matched: matchedBumpLabels } = inferExpectedBumpFromLabels(labels);
+          if (!expectedBump) {
+            errors.push(
+              `PR must have exactly one bump label: patch/minor/major (or release:patch|minor|major). Found: ${matchedBumpLabels.join(", ") || "none"}.`
+            );
+          } else if (baseVersion && headVersion) {
+            const actualBump = bumpType(baseVersion, headVersion);
+            if (actualBump !== expectedBump) {
+              errors.push(
+                `Version bump does not match label. Label expects ${expectedBump}, but base=${baseVersion} to head=${headVersion} is ${actualBump}.`
+              );
+            }
+          }
+
+          const branchSemverMatch = headRef.match(/(?:^|\/)v?(\d+\.\d+\.\d+)(?:$|[-_/])/);
+          if (branchSemverMatch && headVersion) {
+            const branchVersion = branchSemverMatch[1];
+            if (branchVersion !== headVersion) {
+              errors.push(`Release branch version (${branchVersion}) must match package.json version (${headVersion}).`);
+            }
+          }
+
+          if (errors.length > 0) {
+            console.error("Release version policy failed:");
+            for (const err of errors) {
+              console.error(`- ${err}`);
+            }
+            process.exit(1);
+          }
+
+          console.log(`Release version policy passed. base=${baseVersion} head=${headVersion} branch=${headRef} labels=${labels.join(",")}`);
+          NODE

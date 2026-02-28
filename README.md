@@ -1,85 +1,24 @@
-# arduino-mcp-server
-Arduino MCP server that wraps `arduino-cli` so AI agents can discover boards/ports, compile/upload sketches, read serial output, and query board pin references.
+# Arduino MCP Server
 
-## Features
-- MCP tools for:
-  - listing connected boards and serial ports
-  - detecting connected hardware with inferred FQBN and next commands
-  - checking `arduino-cli` availability with OS-specific install guidance (`arduino_cli_doctor`)
-  - auto-installing `arduino-cli` when missing (`install_arduino_cli`)
-  - ensuring required board cores are installed (`ensure_core_installed`)
-  - listing supported boards
-  - compiling sketches
-  - uploading sketches
-  - reading a serial snapshot (time-bounded monitor)
-  - fetching `arduino-cli board details`
-  - querying local board pin/reference metadata
-- Structured JSON responses so agents can reason over output
-- Optional sketch path sandboxing via `ARDUINO_SKETCH_ROOT`
+Arduino MCP server for `arduino-cli` workflows: dependency checks/install, hardware detection, compile/upload, serial monitoring, and board reference lookup.
 
-## Requirements
-- Node.js 20+
-- `arduino-cli` installed and available on `PATH` (or set `ARDUINO_CLI_PATH`)
-
-## Agent Workflow Contract
-Use this workflow in AI agents:
-1. Call `arduino_cli_doctor` first.
-2. If `installed=false`, call `install_arduino_cli` with `{"method":"auto"}`.
-3. If auto-install fails, use the returned OS-specific `installGuide`.
-4. Set `ARDUINO_CLI_PATH` if the binary is not on `PATH`.
-5. Re-run `arduino_cli_doctor` and continue only when `installed=true`.
-6. Only then call `detect_hardware`, `compile_sketch`, `upload_sketch`, etc.
-
-Do not attempt fallback hardware scans before `arduino-cli` is available.
-
-When `detect_hardware` returns unresolved/non-standard board matches, the tool now includes
-`requiresUserBoardConfirmation` and an `agentAction` question payload. Agents should ask the user
-to confirm board model/FQBN before continuing.
-
-`compile_sketch` and `upload_sketch` automatically ensure board core installation from FQBN by default
-(`autoInstallCore=true`), so agents should not need manual `arduino-cli core install` in normal flows.
-
-## Install Arduino CLI Quickly
-Official docs: https://docs.arduino.cc/arduino-cli/installation/
-
-- Windows (recommended): `winget install ArduinoSA.CLI`
-- macOS: `brew install arduino-cli`
-- Linux: `brew install arduino-cli` or official install script
-
-If needed, set `ARDUINO_CLI_PATH`:
-- PowerShell (current session): `$env:ARDUINO_CLI_PATH='C:\\path\\to\\arduino-cli.exe'`
-- Bash/Zsh (current session): `export ARDUINO_CLI_PATH=/absolute/path/to/arduino-cli`
-
-## Install
-```bash
-npm install
-npm run build
-```
-
-## Run
-```bash
-npm start
-```
-
-For local development:
+## Quick Start
+Install globally:
 
 ```bash
-npm run dev
+npm install -g arduino-mcp-server
 ```
 
-## Environment variables
-- `ARDUINO_CLI_PATH`: path/command for Arduino CLI. Default: `arduino-cli`
-- `ARDUINO_SKETCH_ROOT`: optional absolute path. When set, `sketchPath` inputs must resolve under this root.
+Add to your AI agent MCP config.
 
-## Example MCP client config (stdio)
-Use your built `build/index.js` as the command target.
+Claude Desktop (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "arduino": {
-      "command": "node",
-      "args": ["D:/Projects/arduino-mcp-server/build/index.js"],
+      "command": "npx",
+      "args": ["-y", "arduino-mcp-server"],
       "env": {
         "ARDUINO_CLI_PATH": "arduino-cli",
         "ARDUINO_SKETCH_ROOT": "D:/Projects/arduino-sketches"
@@ -89,36 +28,75 @@ Use your built `build/index.js` as the command target.
 }
 ```
 
-## Board Reference Data
-The server includes a starter board reference database at `data/board-reference.json` with common pin mappings.
-You can expand this file or replace it with data from an external source later.
+Codex MCP config:
 
-## MCP Capability Coverage
-- Tools: compile/upload/monitor/board discovery and reference lookup
-- Resource: `arduino://boards/reference` for board metadata
-- Prompts:
-  - `arduino-cli-bootstrap-policy` for dependency/bootstrap behavior
-  - `arduino-setup-assistant` for wiring/setup guidance
-
-## Publish To MCP Registry
-This repo includes a registry manifest at `server.json`.
-
-### Prerequisites
-1. Publish the npm package first (`identifier` and `version` in `server.json` must exist):
-   - `npm login`
-   - `npm run build`
-   - `npm publish --access public`
-2. Get a registry auth token (Bearer token) for `registry.modelcontextprotocol.io`.
-
-### Publish command
-PowerShell:
-
-```powershell
-$env:MCP_REGISTRY_TOKEN="<your_registry_token>"
-curl --request POST `
-  --url https://registry.modelcontextprotocol.io/v0.1/publish `
-  --header "Accept: application/json, application/problem+json" `
-  --header "Authorization: Bearer $env:MCP_REGISTRY_TOKEN" `
-  --header "Content-Type: application/json" `
-  --data-binary "@server.json"
+```json
+{
+  "mcpServers": {
+    "arduino": {
+      "command": "npx",
+      "args": ["-y", "arduino-mcp-server"],
+      "env": {
+        "ARDUINO_CLI_PATH": "arduino-cli",
+        "ARDUINO_SKETCH_ROOT": "D:/Projects/arduino-sketches"
+      }
+    }
+  }
+}
 ```
+
+## Features
+- `arduino_cli_doctor` and `install_arduino_cli` for dependency bootstrap
+- `detect_hardware` with board/FQBN inference and user-confirmation guidance
+- `ensure_core_installed` with automatic core setup from FQBN
+- `compile_sketch` and `upload_sketch` with optional auto core install
+- Serial monitoring and board/port listing tools
+- Local board reference resource and setup prompts
+
+## Requirements
+- Node.js 20+
+- `arduino-cli` available on `PATH` (or let the server install it via tools)
+
+## Configuration
+- `ARDUINO_CLI_PATH`: Arduino CLI command/path (default: `arduino-cli`)
+- `ARDUINO_SKETCH_ROOT`: optional absolute root for sketch operations
+
+## MCP Surface
+Tools:
+- `arduino_cli_doctor`
+- `install_arduino_cli`
+- `detect_hardware`
+- `ensure_core_installed`
+- `compile_sketch`
+- `upload_sketch`
+- `read_serial_snapshot`
+- `list_connected_boards`
+- `list_supported_boards`
+- `list_serial_ports`
+- `get_board_details`
+- `list_board_reference`
+- `search_board_reference`
+
+Resources:
+- `arduino://boards/reference`
+
+Prompts:
+- `arduino-cli-bootstrap-policy`
+- `arduino-setup-assistant`
+
+## Development
+```bash
+git clone https://github.com/akshatnerella/arduino-mcp-server
+cd arduino-mcp-server
+npm install
+npm run typecheck
+npm run build
+npm run dev
+```
+
+## Release
+- PRs into `main` must come from `release/*` branches.
+- PRs must include exactly one bump label: `patch`, `minor`, or `major`.
+
+## License
+MIT, see [LICENSE](LICENSE).

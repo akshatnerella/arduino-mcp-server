@@ -1,0 +1,115 @@
+name: Release Publish
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-publish-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify package and manifest versions are aligned
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const server = JSON.parse(fs.readFileSync("server.json", "utf8"));
+          const issues = [];
+
+          if (server.version !== pkg.version) {
+            issues.push(`server.json version (${server.version}) must equal package.json version (${pkg.version}).`);
+          }
+
+          if (!Array.isArray(server.packages) || server.packages.length === 0) {
+            issues.push("server.json must contain at least one package in packages[].");
+          } else {
+            const npmPackage = server.packages.find((p) => p.identifier === pkg.name) ?? server.packages[0];
+            if (!npmPackage.identifier) {
+              issues.push("server.json packages[] entry must include identifier.");
+            }
+            if (npmPackage.identifier !== pkg.name) {
+              issues.push(`server.json package identifier (${npmPackage.identifier}) must match package name (${pkg.name}).`);
+            }
+            if (npmPackage.version !== pkg.version) {
+              issues.push(`server.json package version (${npmPackage.version}) must equal package.json version (${pkg.version}).`);
+            }
+          }
+
+          if (issues.length > 0) {
+            console.error("Version/manifest validation failed:");
+            for (const issue of issues) {
+              console.error(`- ${issue}`);
+            }
+            process.exit(1);
+          }
+          console.log("Version/manifest validation passed.");
+          NODE
+
+      - name: Check npm publication state
+        id: npm_state
+        run: |
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "name=${PKG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          if npm view "${PKG_NAME}@${PKG_VERSION}" version > /dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${PKG_NAME}@${PKG_VERSION} is already published on npm. Skipping npm publish step."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "Version ${PKG_NAME}@${PKG_VERSION} is not yet published."
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish package to npm
+        if: steps.npm_state.outputs.already_published != 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify package exists on npm
+        run: |
+          npm view "${{ steps.npm_state.outputs.name }}@${{ steps.npm_state.outputs.version }}" version
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          chmod +x mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Validate server manifest
+        run: mcp-publisher validate
+
+      - name: Login to MCP registry (GitHub OIDC)
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP registry
+        run: mcp-publisher publish server.json
