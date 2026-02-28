@@ -1,13 +1,25 @@
 {
   "name": "arduino-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Arduino CLI wrapper MCP server",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "build/index.js",
+  "bin": {
+    "arduino-mcp-server": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "data",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node build/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
@@ -17,7 +29,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.4"
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -39,14 +39,14 @@ npm run dev
 - `ARDUINO_SKETCH_ROOT`: optional absolute path. When set, `sketchPath` inputs must resolve under this root.
 
 ## Example MCP client config (stdio)
-Use your built `dist/index.js` as the command target.
+Use your built `build/index.js` as the command target.
 
 ```json
 {
   "mcpServers": {
     "arduino": {
       "command": "node",
-      "args": ["D:/Projects/arduino-mcp-server/dist/index.js"],
+      "args": ["D:/Projects/arduino-mcp-server/build/index.js"],
       "env": {
         "ARDUINO_CLI_PATH": "arduino-cli",
         "ARDUINO_SKETCH_ROOT": "D:/Projects/arduino-sketches"
@@ -59,3 +59,8 @@ Use your built `dist/index.js` as the command target.
 ## Board Reference Data
 The server includes a starter board reference database at `data/board-reference.json` with common pin mappings.
 You can expand this file or replace it with data from an external source later.
+
+## MCP Capability Coverage
+- Tools: compile/upload/monitor/board discovery and reference lookup
+- Resource: `arduino://boards/reference` for board metadata
+- Prompt: `arduino-setup-assistant` template for wiring/setup guidance
