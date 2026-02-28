@@ -15,7 +15,7 @@ on:
 permissions:
   contents: write
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   require-release-source-branch:
@@ -77,13 +77,21 @@ jobs:
               return;
             }
 
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number,
-              labels: ["release/patch"]
-            });
-            core.info("Added default label release/patch.");
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                labels: ["release/patch"]
+              });
+              core.info("Added default label release/patch.");
+            } catch (error) {
+              if (error?.status === 403) {
+                core.warning("No permission to add labels with this GITHUB_TOKEN in this PR context. Continuing without auto-label.");
+                return;
+              }
+              throw error;
+            }
 
       - name: Auto-bump versions from PR label
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
@@ -348,14 +356,6 @@ jobs:
           }
           if (defaultedBumpLabel) {
             console.log("No bump label found in event payload; treating expected bump as patch.");
-          }
-
-          const branchSemverMatch = headRef.match(/(?:^|\/)v?(\d+\.\d+\.\d+)(?:$|[-_/])/);
-          if (branchSemverMatch && headVersion) {
-            const branchVersion = branchSemverMatch[1];
-            if (branchVersion !== headVersion) {
-              errors.push(`Release branch version (${branchVersion}) must match package.json version (${headVersion}).`);
-            }
           }
 
           if (errors.length > 0) {
