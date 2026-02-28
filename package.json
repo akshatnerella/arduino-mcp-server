@@ -27,6 +27,15 @@
     "arduino",
     "arduino-cli"
   ],
+  "mcpName": "io.github.akshatnerella/arduino-mcp-server",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akshatnerella/arduino-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/akshatnerella/arduino-mcp-server/issues"
+  },
+  "homepage": "https://github.com/akshatnerella/arduino-mcp-server#readme",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

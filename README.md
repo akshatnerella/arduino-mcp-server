@@ -99,3 +99,26 @@ You can expand this file or replace it with data from an external source later.
 - Prompts:
   - `arduino-cli-bootstrap-policy` for dependency/bootstrap behavior
   - `arduino-setup-assistant` for wiring/setup guidance
+
+## Publish To MCP Registry
+This repo includes a registry manifest at `server.json`.
+
+### Prerequisites
+1. Publish the npm package first (`identifier` and `version` in `server.json` must exist):
+   - `npm login`
+   - `npm run build`
+   - `npm publish --access public`
+2. Get a registry auth token (Bearer token) for `registry.modelcontextprotocol.io`.
+
+### Publish command
+PowerShell:
+
+```powershell
+$env:MCP_REGISTRY_TOKEN="<your_registry_token>"
+curl --request POST `
+  --url https://registry.modelcontextprotocol.io/v0.1/publish `
+  --header "Accept: application/json, application/problem+json" `
+  --header "Authorization: Bearer $env:MCP_REGISTRY_TOKEN" `
+  --header "Content-Type: application/json" `
+  --data-binary "@server.json"
+```
