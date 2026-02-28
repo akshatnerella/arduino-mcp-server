@@ -44,6 +44,28 @@ export function listBoardReferences(): BoardReference[] {
   return store.boards;
 }
 
+export function getBoardReferenceById(id: string): BoardReference | null {
+  const normalized = id.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  return store.boards.find((board) => board.id.toLowerCase() === normalized) ?? null;
+}
+
+export function findBoardReferenceByFqbn(fqbn: string): BoardReference | null {
+  const normalized = fqbn.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  return (
+    store.boards.find((board) =>
+      board.fqbnCandidates.some((candidate) => candidate.toLowerCase() === normalized)
+    ) ?? null
+  );
+}
+
 export function findBoardReference(query: string): BoardReference[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) {

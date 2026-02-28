@@ -5,7 +5,12 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { findBoardReference, listBoardReferences } from "./boardReference.js";
+import {
+  findBoardReference,
+  findBoardReferenceByFqbn,
+  listBoardReferences,
+  type BoardReference
+} from "./boardReference.js";
 import {
   resolveSketchPath,
   runArduinoCli,
@@ -14,11 +19,17 @@ import {
   type ArduinoCliConfig,
   type CommandResult
 } from "./arduinoCli.js";
+import { PortOperationCoordinator } from "./portCoordinator.js";
+import { SerialSessionManager } from "./serialSessions.js";
+import { runSafetyPreflight, type PowerSpec, type WiringSignal } from "./safety.js";
 
 const arduinoConfig: ArduinoCliConfig = {
   cliPath: process.env.ARDUINO_CLI_PATH ?? "arduino-cli",
   sketchRoot: process.env.ARDUINO_SKETCH_ROOT
 };
+
+const portCoordinator = new PortOperationCoordinator();
+const serialSessionManager = new SerialSessionManager(portCoordinator);
 
 const commandResultSchema = z.object({
   ok: z.boolean(),
@@ -33,9 +44,21 @@ const commandResultSchema = z.object({
 
 const toolOutputShape = {
   ok: z.boolean(),
+  status: z.enum(["ok", "warning", "error"]).optional(),
   command: z.string().optional(),
   data: z.unknown().optional(),
   raw: commandResultSchema.optional(),
+  rawTail: z
+    .object({
+      stdout: z.string().optional(),
+      stderr: z.string().optional()
+    })
+    .optional(),
+  stage: z.string().optional(),
+  errorCode: z.string().optional(),
+  retryable: z.boolean().optional(),
+  reasonCodes: z.array(z.string()).optional(),
+  nextActions: z.array(z.string()).optional(),
   note: z.string().optional(),
   error: z.string().optional()
 };
@@ -547,9 +570,189 @@ function normalizePortEntry(entry: JsonRecord): NormalizedPortEntry {
   };
 }
 
+interface SafetyContextInput {
+  board?: string;
+  fqbn?: string;
+  wiring?: WiringSignal[];
+  power?: PowerSpec;
+}
+
+interface ResolvedBoardForSafety {
+  board: BoardReference | null;
+  source: "board" | "fqbn" | "port_inference" | "none";
+  confidenceType: "measured" | "inferred" | "heuristic";
+  note?: string;
+}
+
+async function inferBoardReferenceFromPort(port: string): Promise<BoardReference | null> {
+  const raw = await runArduinoCli(arduinoConfig, ["board", "list", "--format", "json"]);
+  if (!raw.ok) {
+    return null;
+  }
+
+  const parsed = tryParseJson<unknown>(raw.stdout);
+  const entries = normalizeBoardListEntries(parsed).map(normalizePortEntry);
+  const target = entries.find(
+    (entry) => entry.address && entry.address.trim().toLowerCase() === port.trim().toLowerCase()
+  );
+  if (!target) {
+    return null;
+  }
+
+  for (const candidate of target.detectedBoardCandidates) {
+    if (candidate.fqbn) {
+      const byFqbn = findBoardReferenceByFqbn(candidate.fqbn);
+      if (byFqbn) {
+        return byFqbn;
+      }
+    }
+    if (candidate.name) {
+      const byName = findBoardReference(candidate.name);
+      if (byName.length > 0) {
+        return byName[0];
+      }
+    }
+  }
+
+  return null;
+}
+
+async function resolveBoardForSafety(context: SafetyContextInput, fallbackPort?: string): Promise<ResolvedBoardForSafety> {
+  if (context.board) {
+    const byBoard = findBoardReference(context.board);
+    if (byBoard.length > 0) {
+      return {
+        board: byBoard[0],
+        source: "board",
+        confidenceType: "heuristic"
+      };
+    }
+  }
+
+  const effectiveFqbn = context.fqbn;
+  if (effectiveFqbn) {
+    const byFqbn = findBoardReferenceByFqbn(effectiveFqbn);
+    if (byFqbn) {
+      return {
+        board: byFqbn,
+        source: "fqbn",
+        confidenceType: "measured"
+      };
+    }
+  }
+
+  if (fallbackPort) {
+    const byPort = await inferBoardReferenceFromPort(fallbackPort);
+    if (byPort) {
+      return {
+        board: byPort,
+        source: "port_inference",
+        confidenceType: "inferred",
+        note: "Board inferred from arduino-cli detected port metadata."
+      };
+    }
+  }
+
+  return {
+    board: null,
+    source: "none",
+    confidenceType: "heuristic"
+  };
+}
+
+function toPortBusyResult(port: string, stage: string, heldBy: ReturnType<PortOperationCoordinator["get"]>) {
+  return toToolResult(
+    {
+      ok: false,
+      status: "error",
+      command: stage,
+      stage,
+      errorCode: "PORT_BUSY",
+      retryable: true,
+      reasonCodes: ["PORT_BUSY"],
+      error: `Port ${port} is busy.`,
+      data: {
+        port,
+        lock: heldBy
+      },
+      nextActions: [
+        "Close any active serial sessions using serial_close_session.",
+        "Retry after current operation on this port completes."
+      ]
+    },
+    true
+  );
+}
+
+function acquirePortLockOrError(port: string, owner: string, stage: string) {
+  const lockResult = portCoordinator.acquire(port, owner, stage);
+  if (!lockResult.ok) {
+    return {
+      ok: false as const,
+      toolResult: toPortBusyResult(port, stage, lockResult.heldBy ?? null)
+    };
+  }
+  return {
+    ok: true as const
+  };
+}
+
+async function runSafetyGate(
+  context: SafetyContextInput,
+  fallbackPort: string | undefined,
+  unsafeSkipPreflight: boolean
+) {
+  if (unsafeSkipPreflight) {
+    return {
+      ok: true,
+      skipped: true,
+      reasonCodes: ["SAFETY_PREFLIGHT_SKIPPED"]
+    };
+  }
+
+  const resolved = await resolveBoardForSafety(context, fallbackPort);
+  if (!resolved.board) {
+    return {
+      ok: false,
+      errorCode: "BOARD_UNKNOWN",
+      reasonCodes: ["BOARD_UNKNOWN"],
+      error:
+        "Safety preflight could not resolve board reference. Provide safetyContext.board, safetyContext.fqbn, or upload fqbn."
+    };
+  }
+
+  const safety = runSafetyPreflight({
+    board: resolved.board,
+    wiring: context.wiring,
+    power: context.power
+  });
+
+  if (safety.status === "blocked") {
+    return {
+      ok: false,
+      errorCode: "SAFETY_PREFLIGHT_BLOCKED",
+      reasonCodes: safety.reasonCodes,
+      error: "Safety preflight blocked this operation due to electrical risk findings.",
+      safety,
+      confidenceType: resolved.confidenceType,
+      source: resolved.source,
+      note: resolved.note
+    };
+  }
+
+  return {
+    ok: true,
+    skipped: false,
+    safety,
+    confidenceType: resolved.confidenceType,
+    source: resolved.source,
+    note: resolved.note
+  };
+}
+
 const server = new McpServer({
   name: "arduino-mcp-server",
-  version: "0.2.0"
+  version: "0.2.5"
 });
 
 server.registerTool(
@@ -1240,7 +1443,37 @@ server.registerTool(
       autoInstallCore: z
         .boolean()
         .optional()
-        .describe("If true (default), auto-install missing board core when fqbn is provided.")
+        .describe("If true (default), auto-install missing board core when fqbn is provided."),
+      unsafeSkipPreflight: z
+        .boolean()
+        .optional()
+        .describe("If true, bypasses safety_preflight checks. Use only when user explicitly accepts risk."),
+      safetyContext: z
+        .object({
+          board: z.string().optional().describe("Board name/id for safety checks."),
+          fqbn: z.string().optional().describe("Board FQBN for safety checks."),
+          wiring: z
+            .array(
+              z.object({
+                pin: z.string(),
+                direction: z.enum(["input", "output", "bidirectional"]).optional(),
+                signalType: z.enum(["digital", "analog", "i2c", "spi", "uart", "power", "ground", "other"]).optional(),
+                voltage: z.number().optional(),
+                currentMa: z.number().optional(),
+                notes: z.string().optional()
+              })
+            )
+            .optional(),
+          power: z
+            .object({
+              supplyVoltage: z.number().optional(),
+              totalCurrentMa: z.number().optional(),
+              supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
+            })
+            .optional()
+        })
+        .optional()
+        .describe("Optional electrical context for preflight checks.")
     },
     outputSchema: toolOutputShape,
     annotations: {
@@ -1250,73 +1483,373 @@ server.registerTool(
       openWorldHint: false
     }
   },
-  async ({ sketchPath, port, fqbn, verify, autoInstallCore = true }) => {
+  async ({
+    sketchPath,
+    port,
+    fqbn,
+    verify,
+    autoInstallCore = true,
+    unsafeSkipPreflight = false,
+    safetyContext
+  }) => {
     try {
-      const resolvedSketchPath = resolveSketchPath(sketchPath, arduinoConfig.sketchRoot);
-      const coreId = fqbn ? fqbnToCoreId(fqbn) : null;
-      const coreEnsure = coreId ? await ensureCoreInstalled(coreId, autoInstallCore) : null;
-      if (coreEnsure && !coreEnsure.ok) {
-        const rawForError = coreEnsure.installRaw ?? coreEnsure.listBeforeRaw ?? coreEnsure.listAfterRaw;
+      const lockOwner = `upload_sketch:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+      const lock = acquirePortLockOrError(port, lockOwner, "upload_sketch");
+      if (!lock.ok) {
+        return lock.toolResult;
+      }
+
+      try {
+        const safetyGate = await runSafetyGate(
+          {
+            board: safetyContext?.board,
+            fqbn: safetyContext?.fqbn ?? fqbn,
+            wiring: safetyContext?.wiring,
+            power: safetyContext?.power
+          },
+          port,
+          unsafeSkipPreflight
+        );
+
+        if (!safetyGate.ok) {
+          return toToolResult(
+            {
+              ok: false,
+              status: "error",
+              command: "upload",
+              stage: "preflight",
+              errorCode: safetyGate.errorCode,
+              reasonCodes: safetyGate.reasonCodes,
+              error: safetyGate.error,
+              data: {
+                port,
+                fqbn: fqbn ?? null,
+                safetyContext: safetyContext ?? null,
+                safetyResult: "safety" in safetyGate ? safetyGate.safety : null,
+                confidenceType: "confidenceType" in safetyGate ? safetyGate.confidenceType : null,
+                source: "source" in safetyGate ? safetyGate.source : null
+              },
+              nextActions: [
+                "Run safety_preflight with board/fqbn and wiring/power details to resolve findings.",
+                "Only use unsafeSkipPreflight=true when user explicitly accepts electrical risk."
+              ]
+            },
+            true
+          );
+        }
+
+        const resolvedSketchPath = resolveSketchPath(sketchPath, arduinoConfig.sketchRoot);
+        const coreId = fqbn ? fqbnToCoreId(fqbn) : null;
+        const coreEnsure = coreId ? await ensureCoreInstalled(coreId, autoInstallCore) : null;
+        if (coreEnsure && !coreEnsure.ok) {
+          const rawForError = coreEnsure.installRaw ?? coreEnsure.listBeforeRaw ?? coreEnsure.listAfterRaw;
+          return toToolResult(
+            {
+              ok: false,
+              status: "error",
+              command: "upload",
+              stage: "core_install",
+              errorCode: "CORE_INSTALL_FAILED",
+              data: {
+                sketchPath: resolvedSketchPath,
+                port,
+                fqbn: fqbn ?? null,
+                coreId,
+                autoInstallCore,
+                coreEnsure: {
+                  installed: coreEnsure.installed,
+                  alreadyInstalled: coreEnsure.alreadyInstalled,
+                  autoInstallAttempted: coreEnsure.autoInstallAttempted
+                }
+              },
+              raw: rawForError,
+              error:
+                rawForError
+                  ? withCliHint(
+                      coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`,
+                      rawForError
+                    )
+                  : coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`
+            },
+            true
+          );
+        }
+
+        const args = ["upload", resolvedSketchPath, "-p", port];
+        if (fqbn) {
+          args.push("--fqbn", fqbn);
+        }
+        if (verify) {
+          args.push("--verify");
+        }
+
+        const raw = await runArduinoCli(arduinoConfig, args, 300_000);
         return toToolResult(
           {
-            ok: false,
+            ok: raw.ok,
+            status: raw.ok
+              ? safetyGate.skipped
+                ? "warning"
+                : safetyGate.safety?.status === "pass_with_warnings"
+                  ? "warning"
+                  : "ok"
+              : "error",
             command: "upload",
+            stage: "upload",
+            errorCode: raw.ok ? undefined : "UPLOAD_FAILED",
+            reasonCodes: safetyGate.skipped
+              ? ["SAFETY_PREFLIGHT_SKIPPED"]
+              : safetyGate.safety?.reasonCodes ?? undefined,
             data: {
               sketchPath: resolvedSketchPath,
               port,
               fqbn: fqbn ?? null,
               coreId,
-              autoInstallCore,
-              coreEnsure: {
-                installed: coreEnsure.installed,
-                alreadyInstalled: coreEnsure.alreadyInstalled,
-                autoInstallAttempted: coreEnsure.autoInstallAttempted
-              }
+              safety: safetyGate.skipped
+                ? {
+                    skipped: true
+                  }
+                : {
+                    source: safetyGate.source,
+                    confidenceType: safetyGate.confidenceType,
+                    preflight: safetyGate.safety
+                  },
+              coreEnsure: coreEnsure
+                ? {
+                    installed: coreEnsure.installed,
+                    alreadyInstalled: coreEnsure.alreadyInstalled,
+                    autoInstallAttempted: coreEnsure.autoInstallAttempted
+                  }
+                : null
             },
-            raw: rawForError,
-            error:
-              rawForError
-                ? withCliHint(
-                    coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`,
-                    rawForError
-                  )
-                : coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`
+            nextActions: raw.ok
+              ? ["Use serial_open_session or read_serial_snapshot to verify runtime logs."]
+              : ["Verify board port/FQBN and retry upload.", "Run detect_hardware if port mapping changed."],
+            raw,
+            error: raw.ok ? undefined : withCliHint("Sketch upload failed.", raw)
           },
-          true
+          !raw.ok
         );
+      } finally {
+        portCoordinator.release(port, lockOwner);
+      }
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "upload_and_wait_ready",
+  {
+    title: "Upload And Wait Ready",
+    description:
+      "Upload a sketch and wait for a serial readiness pattern, handling post-upload reset/re-enumeration windows.",
+    inputSchema: {
+      sketchPath: z.string().describe("Path to sketch folder or .ino file."),
+      port: z.string().describe("Serial port path, e.g. COM6 or /dev/ttyACM0."),
+      fqbn: z.string().optional().describe("Optional board FQBN when auto-detect is insufficient."),
+      verify: z.boolean().optional().describe("Verify uploaded binary when supported."),
+      autoInstallCore: z
+        .boolean()
+        .optional()
+        .describe("If true (default), auto-install missing board core when fqbn is provided."),
+      readyPattern: z.string().optional().describe("Optional serial text pattern to wait for after upload."),
+      readyTimeoutMs: z
+        .number()
+        .int()
+        .min(500)
+        .max(120_000)
+        .optional()
+        .describe("How long to wait for readyPattern."),
+      readyBaudRate: z.number().int().positive().optional().describe("Baud rate for readiness check. Default 115200."),
+      readyCaseSensitive: z.boolean().optional().describe("If true, readiness matching is case-sensitive."),
+      unsafeSkipPreflight: z
+        .boolean()
+        .optional()
+        .describe("If true, bypasses safety_preflight checks. Use only when user explicitly accepts risk."),
+      safetyContext: z
+        .object({
+          board: z.string().optional(),
+          fqbn: z.string().optional(),
+          wiring: z
+            .array(
+              z.object({
+                pin: z.string(),
+                direction: z.enum(["input", "output", "bidirectional"]).optional(),
+                signalType: z.enum(["digital", "analog", "i2c", "spi", "uart", "power", "ground", "other"]).optional(),
+                voltage: z.number().optional(),
+                currentMa: z.number().optional(),
+                notes: z.string().optional()
+              })
+            )
+            .optional(),
+          power: z
+            .object({
+              supplyVoltage: z.number().optional(),
+              totalCurrentMa: z.number().optional(),
+              supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
+            })
+            .optional()
+        })
+        .optional()
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async ({
+    sketchPath,
+    port,
+    fqbn,
+    verify,
+    autoInstallCore = true,
+    readyPattern,
+    readyTimeoutMs = 20_000,
+    readyBaudRate = 115200,
+    readyCaseSensitive = false,
+    unsafeSkipPreflight = false,
+    safetyContext
+  }) => {
+    try {
+      const lockOwner = `upload_and_wait_ready:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+      const lock = acquirePortLockOrError(port, lockOwner, "upload_and_wait_ready");
+      if (!lock.ok) {
+        return lock.toolResult;
       }
 
-      const args = ["upload", resolvedSketchPath, "-p", port];
-      if (fqbn) {
-        args.push("--fqbn", fqbn);
-      }
-      if (verify) {
-        args.push("--verify");
-      }
-
-      const raw = await runArduinoCli(arduinoConfig, args, 300_000);
-      return toToolResult(
-        {
-          ok: raw.ok,
-          command: "upload",
-          data: {
-            sketchPath: resolvedSketchPath,
-            port,
-            fqbn: fqbn ?? null,
-            coreId,
-            coreEnsure: coreEnsure
-              ? {
-                  installed: coreEnsure.installed,
-                  alreadyInstalled: coreEnsure.alreadyInstalled,
-                  autoInstallAttempted: coreEnsure.autoInstallAttempted
-                }
-              : null
+      try {
+        const safetyGate = await runSafetyGate(
+          {
+            board: safetyContext?.board,
+            fqbn: safetyContext?.fqbn ?? fqbn,
+            wiring: safetyContext?.wiring,
+            power: safetyContext?.power
           },
-          raw,
-          error: raw.ok ? undefined : withCliHint("Sketch upload failed.", raw)
-        },
-        !raw.ok
-      );
+          port,
+          unsafeSkipPreflight
+        );
+
+        if (!safetyGate.ok) {
+          return toToolResult(
+            {
+              ok: false,
+              status: "error",
+              command: "upload_and_wait_ready",
+              stage: "preflight",
+              errorCode: safetyGate.errorCode,
+              reasonCodes: safetyGate.reasonCodes,
+              error: safetyGate.error
+            },
+            true
+          );
+        }
+
+        const resolvedSketchPath = resolveSketchPath(sketchPath, arduinoConfig.sketchRoot);
+        const coreId = fqbn ? fqbnToCoreId(fqbn) : null;
+        const coreEnsure = coreId ? await ensureCoreInstalled(coreId, autoInstallCore) : null;
+        if (coreEnsure && !coreEnsure.ok) {
+          const rawForError = coreEnsure.installRaw ?? coreEnsure.listBeforeRaw ?? coreEnsure.listAfterRaw;
+          return toToolResult(
+            {
+              ok: false,
+              status: "error",
+              command: "upload_and_wait_ready",
+              stage: "core_install",
+              errorCode: "CORE_INSTALL_FAILED",
+              raw: rawForError,
+              error:
+                rawForError
+                  ? withCliHint(
+                      coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`,
+                      rawForError
+                    )
+                  : coreEnsure.error ?? `Required core "${coreId}" is not installed and could not be ensured.`
+            },
+            true
+          );
+        }
+
+        const uploadArgs = ["upload", resolvedSketchPath, "-p", port];
+        if (fqbn) {
+          uploadArgs.push("--fqbn", fqbn);
+        }
+        if (verify) {
+          uploadArgs.push("--verify");
+        }
+
+        const uploadRaw = await runArduinoCli(arduinoConfig, uploadArgs, 300_000);
+        if (!uploadRaw.ok) {
+          return toToolResult(
+            {
+              ok: false,
+              status: "error",
+              command: "upload_and_wait_ready",
+              stage: "upload",
+              errorCode: "UPLOAD_FAILED",
+              raw: uploadRaw,
+              error: withCliHint("Sketch upload failed.", uploadRaw)
+            },
+            true
+          );
+        }
+
+        let readyMatched = true;
+        let readyRaw: CommandResult | null = null;
+        if (readyPattern && readyPattern.trim().length > 0) {
+          readyRaw = await runArduinoCli(
+            arduinoConfig,
+            ["monitor", "-p", port, "-c", `baudrate=${Math.floor(readyBaudRate)}`],
+            Math.min(Math.max(readyTimeoutMs, 500), 120_000)
+          );
+
+          const serialText = `${readyRaw.stdout}\n${readyRaw.stderr}`;
+          const needle = readyCaseSensitive ? readyPattern : readyPattern.toLowerCase();
+          const haystack = readyCaseSensitive ? serialText : serialText.toLowerCase();
+          readyMatched = haystack.includes(needle);
+        }
+
+        return toToolResult(
+          {
+            ok: readyMatched,
+            status: readyMatched ? "ok" : "error",
+            command: "upload_and_wait_ready",
+            stage: readyPattern ? "wait_ready" : "upload",
+            errorCode: readyMatched ? undefined : "READY_PATTERN_TIMEOUT",
+            reasonCodes: safetyGate.skipped
+              ? ["SAFETY_PREFLIGHT_SKIPPED"]
+              : safetyGate.safety?.reasonCodes ?? undefined,
+            data: {
+              sketchPath: resolvedSketchPath,
+              port,
+              fqbn: fqbn ?? null,
+              readyPattern: readyPattern ?? null,
+              readyMatched,
+              safety: safetyGate.skipped
+                ? { skipped: true }
+                : {
+                    source: safetyGate.source,
+                    confidenceType: safetyGate.confidenceType,
+                    preflight: safetyGate.safety
+                  }
+            },
+            rawTail: {
+              stdout: readyRaw ? readyRaw.stdout.slice(-2000) : uploadRaw.stdout.slice(-2000),
+              stderr: readyRaw ? readyRaw.stderr.slice(-2000) : uploadRaw.stderr.slice(-2000)
+            },
+            error: readyMatched
+              ? undefined
+              : "Upload succeeded but readiness pattern was not observed before timeout."
+          },
+          !readyMatched
+        );
+      } finally {
+        portCoordinator.release(port, lockOwner);
+      }
     } catch (error) {
       return toUnhandledError(error);
     }
@@ -1341,30 +1874,549 @@ server.registerTool(
   },
   async ({ port, baudRate = 9600, durationMs = 4000 }) => {
     try {
-      const boundedDurationMs = Math.min(Math.max(durationMs, 500), 60_000);
-      const raw = await runArduinoCli(
-        arduinoConfig,
-        ["monitor", "-p", port, "-c", `baudrate=${Math.floor(baudRate)}`],
-        boundedDurationMs
-      );
+      const lockOwner = `read_serial_snapshot:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+      const lock = acquirePortLockOrError(port, lockOwner, "read_serial_snapshot");
+      if (!lock.ok) {
+        return lock.toolResult;
+      }
 
-      const ok = raw.ok || raw.timedOut;
+      try {
+        const boundedDurationMs = Math.min(Math.max(durationMs, 500), 60_000);
+        const raw = await runArduinoCli(
+          arduinoConfig,
+          ["monitor", "-p", port, "-c", `baudrate=${Math.floor(baudRate)}`],
+          boundedDurationMs
+        );
+
+        const ok = raw.ok || raw.timedOut;
+        return toToolResult(
+          {
+            ok,
+            status: ok ? "ok" : "error",
+            command: "monitor",
+            stage: "serial_monitor_snapshot",
+            errorCode: ok ? undefined : "SERIAL_MONITOR_FAILED",
+            data: {
+              port,
+              baudRate,
+              durationMs: boundedDurationMs
+            },
+            note: raw.timedOut
+              ? "Capture stopped at timeout (expected for snapshot mode)."
+              : "Monitor exited before timeout.",
+            raw,
+            error: ok ? undefined : withCliHint("Serial monitor failed.", raw)
+          },
+          !ok
+        );
+      } finally {
+        portCoordinator.release(port, lockOwner);
+      }
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "safety_preflight",
+  {
+    title: "Safety Preflight",
+    description:
+      "Run electrical preflight checks (voltage/current/pin risks) before upload or serial write operations.",
+    inputSchema: {
+      board: z.string().optional().describe("Board name/id (preferred when known)."),
+      fqbn: z.string().optional().describe("Board FQBN when known."),
+      port: z.string().optional().describe("Optional port for automatic board inference."),
+      wiring: z
+        .array(
+          z.object({
+            pin: z.string(),
+            direction: z.enum(["input", "output", "bidirectional"]).optional(),
+            signalType: z.enum(["digital", "analog", "i2c", "spi", "uart", "power", "ground", "other"]).optional(),
+            voltage: z.number().optional(),
+            currentMa: z.number().optional(),
+            notes: z.string().optional()
+          })
+        )
+        .optional(),
+      power: z
+        .object({
+          supplyVoltage: z.number().optional(),
+          totalCurrentMa: z.number().optional(),
+          supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
+        })
+        .optional()
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ board, fqbn, port, wiring, power }) => {
+    try {
+      const resolved = await resolveBoardForSafety(
+        {
+          board,
+          fqbn,
+          wiring,
+          power
+        },
+        port
+      );
+      if (!resolved.board) {
+        return toToolResult(
+          {
+            ok: false,
+            status: "error",
+            command: "safety_preflight",
+            stage: "resolve_board",
+            errorCode: "BOARD_UNKNOWN",
+            reasonCodes: ["BOARD_UNKNOWN"],
+            error:
+              "Could not resolve board reference for safety checks. Provide board or fqbn, or pass port for inference.",
+            data: {
+              board: board ?? null,
+              fqbn: fqbn ?? null,
+              port: port ?? null
+            },
+            nextActions: [
+              "Run detect_hardware and pass selected board/fqbn.",
+              "Use search_board_reference to find a matching board id."
+            ]
+          },
+          true
+        );
+      }
+
+      const preflight = runSafetyPreflight({
+        board: resolved.board,
+        wiring,
+        power
+      });
+
       return toToolResult(
         {
-          ok,
-          command: "monitor",
+          ok: preflight.status !== "blocked",
+          status:
+            preflight.status === "blocked"
+              ? "error"
+              : preflight.status === "pass_with_warnings"
+                ? "warning"
+                : "ok",
+          command: "safety_preflight",
+          stage: "electrical_preflight",
+          errorCode: preflight.status === "blocked" ? "SAFETY_PREFLIGHT_BLOCKED" : undefined,
+          reasonCodes: preflight.reasonCodes,
           data: {
-            port,
-            baudRate,
-            durationMs: boundedDurationMs
+            source: resolved.source,
+            confidenceType: resolved.confidenceType,
+            note: resolved.note ?? null,
+            preflight
           },
-          note: raw.timedOut
-            ? "Capture stopped at timeout (expected for snapshot mode)."
-            : "Monitor exited before timeout.",
-          raw,
-          error: ok ? undefined : withCliHint("Serial monitor failed.", raw)
+          nextActions: preflight.nextActions,
+          error:
+            preflight.status === "blocked"
+              ? "Safety preflight blocked operation due to electrical risk findings."
+              : undefined
         },
-        !ok
+        preflight.status === "blocked"
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_open_session",
+  {
+    title: "Serial Open Session",
+    description: "Open a stateful serial monitor session with port lock ownership.",
+    inputSchema: {
+      port: z.string().describe("Serial port path, e.g. COM6 or /dev/ttyACM0."),
+      baudRate: z.number().int().positive().optional().describe("Baud rate. Default: 9600."),
+      ttlMs: z.number().int().min(5_000).max(600_000).optional().describe("Session lease TTL in ms."),
+      maxBufferBytes: z
+        .number()
+        .int()
+        .min(4096)
+        .max(2_097_152)
+        .optional()
+        .describe("Max in-memory receive buffer.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async ({ port, baudRate = 9600, ttlMs = 120_000, maxBufferBytes = 262_144 }) => {
+    try {
+      const result = await serialSessionManager.openSession({
+        cliPath: arduinoConfig.cliPath,
+        port,
+        baudRate,
+        ttlMs,
+        maxBufferBytes
+      });
+      return toToolResult(
+        {
+          ok: result.ok,
+          status: result.ok ? "ok" : "error",
+          command: "serial_open_session",
+          stage: "serial_session_open",
+          errorCode: result.errorCode,
+          retryable: result.retryable,
+          reasonCodes: result.errorCode ? [result.errorCode] : undefined,
+          data: {
+            session: result.session ?? null,
+            lockHeldBy: result.lockHeldBy ?? null
+          },
+          error: result.error
+        },
+        !result.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_list_sessions",
+  {
+    title: "Serial List Sessions",
+    description: "List active serial sessions and current port lock state.",
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async () => {
+    try {
+      const sessions = serialSessionManager.listSessions();
+      return toToolResult({
+        ok: true,
+        status: "ok",
+        command: "serial_list_sessions",
+        data: {
+          count: sessions.length,
+          sessions,
+          locks: portCoordinator.list()
+        }
+      });
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_read",
+  {
+    title: "Serial Read",
+    description: "Read buffered bytes from an open serial session.",
+    inputSchema: {
+      sessionId: z.string(),
+      fromOffset: z.number().int().min(0).optional().describe("Read offset cursor. Defaults to current buffer start."),
+      maxBytes: z.number().int().min(1).max(1_048_576).optional().describe("Maximum bytes to return."),
+      encoding: z.enum(["utf8", "base64"]).optional().describe("Output encoding. Default: utf8.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ sessionId, fromOffset, maxBytes = 8192, encoding = "utf8" }) => {
+    try {
+      const result = serialSessionManager.readSession(sessionId, fromOffset ?? null, maxBytes, encoding);
+      return toToolResult(
+        {
+          ok: result.ok,
+          status: result.ok ? "ok" : "error",
+          command: "serial_read",
+          stage: "serial_session_read",
+          errorCode: result.errorCode,
+          reasonCodes: result.errorCode ? [result.errorCode] : undefined,
+          data: result.ok
+            ? {
+                session: result.session,
+                chunk: {
+                  data: result.data,
+                  encoding: result.encoding,
+                  bytesRead: result.bytesRead,
+                  startOffset: result.startOffset,
+                  nextOffset: result.nextOffset,
+                  truncated: result.truncated
+                }
+              }
+            : {
+                session: result.session ?? null
+              },
+          error: result.error
+        },
+        !result.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_expect",
+  {
+    title: "Serial Expect",
+    description: "Wait for a string pattern in a serial session buffer with timeout.",
+    inputSchema: {
+      sessionId: z.string(),
+      pattern: z.string().min(1),
+      timeoutMs: z.number().int().min(200).max(120_000).optional(),
+      caseSensitive: z.boolean().optional(),
+      fromOffset: z.number().int().min(0).optional().describe("Optional explicit cursor offset.")
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ sessionId, pattern, timeoutMs = 10_000, caseSensitive = false, fromOffset }) => {
+    try {
+      const result = await serialSessionManager.expectInSession(
+        sessionId,
+        pattern,
+        timeoutMs,
+        caseSensitive,
+        fromOffset ?? null
+      );
+      return toToolResult(
+        {
+          ok: result.ok,
+          status: result.ok ? "ok" : "error",
+          command: "serial_expect",
+          stage: "serial_session_expect",
+          errorCode: result.errorCode,
+          reasonCodes: result.errorCode ? [result.errorCode] : undefined,
+          data: {
+            session: result.session ?? null,
+            matched: result.matched ?? false,
+            pattern: result.pattern ?? pattern,
+            matchIndex: result.matchIndex ?? null,
+            fromOffset: result.fromOffset ?? null,
+            timeoutMs: result.timeoutMs ?? timeoutMs
+          },
+          error: result.error
+        },
+        !result.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_write",
+  {
+    title: "Serial Write",
+    description: "Write bytes to an open serial session. Safety preflight is enforced unless explicitly skipped.",
+    inputSchema: {
+      sessionId: z.string(),
+      data: z.string().describe("Payload to send."),
+      encoding: z.enum(["utf8", "base64"]).optional().describe("Payload encoding. Default: utf8."),
+      lineEnding: z.enum(["none", "lf", "crlf"]).optional().describe("Optional line ending append."),
+      unsafeSkipPreflight: z
+        .boolean()
+        .optional()
+        .describe("If true, bypasses safety_preflight checks. Use only with explicit user acceptance."),
+      safetyContext: z
+        .object({
+          board: z.string().optional(),
+          fqbn: z.string().optional(),
+          wiring: z
+            .array(
+              z.object({
+                pin: z.string(),
+                direction: z.enum(["input", "output", "bidirectional"]).optional(),
+                signalType: z.enum(["digital", "analog", "i2c", "spi", "uart", "power", "ground", "other"]).optional(),
+                voltage: z.number().optional(),
+                currentMa: z.number().optional(),
+                notes: z.string().optional()
+              })
+            )
+            .optional(),
+          power: z
+            .object({
+              supplyVoltage: z.number().optional(),
+              totalCurrentMa: z.number().optional(),
+              supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
+            })
+            .optional()
+        })
+        .optional()
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async ({ sessionId, data, encoding = "utf8", lineEnding = "none", unsafeSkipPreflight = false, safetyContext }) => {
+    try {
+      const session = serialSessionManager.getSessionSummary(sessionId);
+      if (!session) {
+        return toToolResult(
+          {
+            ok: false,
+            status: "error",
+            command: "serial_write",
+            stage: "resolve_session",
+            errorCode: "SESSION_NOT_FOUND",
+            reasonCodes: ["SESSION_NOT_FOUND"],
+            error: `No serial session found for id ${sessionId}.`
+          },
+          true
+        );
+      }
+
+      const safetyGate = await runSafetyGate(
+        {
+          board: safetyContext?.board,
+          fqbn: safetyContext?.fqbn,
+          wiring: safetyContext?.wiring,
+          power: safetyContext?.power
+        },
+        session.port,
+        unsafeSkipPreflight
+      );
+
+      if (!safetyGate.ok) {
+        return toToolResult(
+          {
+            ok: false,
+            status: "error",
+            command: "serial_write",
+            stage: "preflight",
+            errorCode: safetyGate.errorCode,
+            reasonCodes: safetyGate.reasonCodes,
+            error: safetyGate.error,
+            data: {
+              session,
+              safetyContext: safetyContext ?? null
+            },
+            nextActions: [
+              "Run safety_preflight with board/fqbn and wiring/power details.",
+              "Use unsafeSkipPreflight=true only with explicit user risk acceptance."
+            ]
+          },
+          true
+        );
+      }
+
+      let payload: Buffer;
+      try {
+        payload = encoding === "base64" ? Buffer.from(data, "base64") : Buffer.from(data, "utf8");
+      } catch (error) {
+        return toToolResult(
+          {
+            ok: false,
+            status: "error",
+            command: "serial_write",
+            stage: "decode_payload",
+            errorCode: "INVALID_PAYLOAD_ENCODING",
+            reasonCodes: ["INVALID_PAYLOAD_ENCODING"],
+            error: error instanceof Error ? error.message : "Failed to decode payload."
+          },
+          true
+        );
+      }
+
+      if (lineEnding === "lf") {
+        payload = Buffer.concat([payload, Buffer.from("\n")]);
+      } else if (lineEnding === "crlf") {
+        payload = Buffer.concat([payload, Buffer.from("\r\n")]);
+      }
+
+      const result = serialSessionManager.writeSession(sessionId, payload);
+      return toToolResult(
+        {
+          ok: result.ok,
+          status: result.ok
+            ? safetyGate.skipped
+              ? "warning"
+              : safetyGate.safety?.status === "pass_with_warnings"
+                ? "warning"
+                : "ok"
+            : "error",
+          command: "serial_write",
+          stage: "serial_session_write",
+          errorCode: result.errorCode,
+          reasonCodes: safetyGate.skipped
+            ? ["SAFETY_PREFLIGHT_SKIPPED"]
+            : safetyGate.safety?.reasonCodes ?? undefined,
+          data: {
+            session: result.session ?? session,
+            writtenBytes: result.writtenBytes ?? 0,
+            safety: safetyGate.skipped
+              ? { skipped: true }
+              : {
+                  source: safetyGate.source,
+                  confidenceType: safetyGate.confidenceType,
+                  preflight: safetyGate.safety
+                }
+          },
+          error: result.error
+        },
+        !result.ok
+      );
+    } catch (error) {
+      return toUnhandledError(error);
+    }
+  }
+);
+
+server.registerTool(
+  "serial_close_session",
+  {
+    title: "Serial Close Session",
+    description: "Close a serial session and release its port lock.",
+    inputSchema: {
+      sessionId: z.string()
+    },
+    outputSchema: toolOutputShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ sessionId }) => {
+    try {
+      const result = serialSessionManager.closeSession(sessionId);
+      return toToolResult(
+        {
+          ok: result.ok,
+          status: result.ok ? "ok" : "error",
+          command: "serial_close_session",
+          stage: "serial_session_close",
+          errorCode: result.errorCode,
+          reasonCodes: result.errorCode ? [result.errorCode] : undefined,
+          data: {
+            session: result.session ?? null
+          },
+          error: result.error
+        },
+        !result.ok
       );
     } catch (error) {
       return toUnhandledError(error);
@@ -1576,6 +2628,15 @@ server.registerPrompt(
 );
 
 async function main() {
+  process.on("SIGINT", () => {
+    serialSessionManager.dispose();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    serialSessionManager.dispose();
+    process.exit(0);
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("arduino-mcp-server running on stdio");
