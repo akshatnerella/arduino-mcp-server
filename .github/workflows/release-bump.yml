@@ -1,0 +1,148 @@
+name: Release Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Target release branch (must start with release/)"
+        required: true
+        type: string
+      bump:
+        description: "Version bump type"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      commit_message:
+        description: "Optional custom commit message"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch naming
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.branch }}
+        run: |
+          if [[ ! "${TARGET_BRANCH}" =~ ^release/ ]]; then
+            echo "Branch must start with release/. Got: ${TARGET_BRANCH}"
+            exit 1
+          fi
+
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Compute and apply version bump
+        id: bump
+        env:
+          BUMP_TYPE: ${{ github.event.inputs.bump }}
+          TARGET_BRANCH: ${{ github.event.inputs.branch }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const { execSync } = require("node:child_process");
+
+          const bumpType = (process.env.BUMP_TYPE || "patch").trim();
+          const targetBranch = (process.env.TARGET_BRANCH || "").trim();
+          if (!targetBranch.startsWith("release/")) {
+            throw new Error(`Invalid branch for release bump: ${targetBranch}`);
+          }
+
+          const valid = new Set(["patch", "minor", "major"]);
+          if (!valid.has(bumpType)) {
+            throw new Error(`Invalid bump type: ${bumpType}`);
+          }
+
+          execSync("git fetch --no-tags origin main", { stdio: "inherit" });
+
+          const basePkg = JSON.parse(execSync("git show origin/main:package.json", { encoding: "utf8" }));
+          const [core] = String(basePkg.version).split("-", 1);
+          const [major, minor, patch] = core.split(".").map((n) => Number.parseInt(n, 10));
+          if (![major, minor, patch].every(Number.isFinite)) {
+            throw new Error(`Invalid base version on origin/main: ${basePkg.version}`);
+          }
+
+          let targetVersion = "";
+          if (bumpType === "major") targetVersion = `${major + 1}.0.0`;
+          else if (bumpType === "minor") targetVersion = `${major}.${minor + 1}.0`;
+          else targetVersion = `${major}.${minor}.${patch + 1}`;
+
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const server = JSON.parse(fs.readFileSync("server.json", "utf8"));
+
+          const matchingPackage = Array.isArray(server.packages)
+            ? server.packages.find((p) => p.identifier === pkg.name) ?? server.packages[0]
+            : null;
+
+          const alreadyAligned =
+            pkg.version === targetVersion &&
+            server.version === targetVersion &&
+            matchingPackage &&
+            matchingPackage.version === targetVersion;
+
+          if (alreadyAligned) {
+            console.log(`No bump needed. Already aligned to ${targetVersion}.`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `target_version=${targetVersion}\nchanged=false\n`);
+            process.exit(0);
+          }
+
+          execSync(`npm version ${targetVersion} --no-git-tag-version`, { stdio: "inherit" });
+
+          const updatedServer = JSON.parse(fs.readFileSync("server.json", "utf8"));
+          updatedServer.version = targetVersion;
+          if (Array.isArray(updatedServer.packages) && updatedServer.packages.length > 0) {
+            const idx = updatedServer.packages.findIndex((p) => p.identifier === pkg.name);
+            const packageIndex = idx >= 0 ? idx : 0;
+            updatedServer.packages[packageIndex].version = targetVersion;
+          }
+          fs.writeFileSync("server.json", `${JSON.stringify(updatedServer, null, 2)}\n`);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `target_version=${targetVersion}\nchanged=true\n`);
+          NODE
+
+      - name: Commit and push bump
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.branch }}
+          COMMIT_MESSAGE: ${{ github.event.inputs.commit_message }}
+          BUMP_TYPE: ${{ github.event.inputs.bump }}
+          TARGET_VERSION: ${{ steps.bump.outputs.target_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json server.json
+          if git diff --cached --quiet; then
+            echo "No staged changes after bump; nothing to commit."
+            exit 0
+          fi
+          if [[ -n "${COMMIT_MESSAGE}" ]]; then
+            MESSAGE="${COMMIT_MESSAGE}"
+          else
+            MESSAGE="chore(release): bump ${BUMP_TYPE} to ${TARGET_VERSION}"
+          fi
+          git commit -m "${MESSAGE}"
+          git push origin "HEAD:${TARGET_BRANCH}"
+
+      - name: Summary
+        run: |
+          echo "Branch: ${{ github.event.inputs.branch }}"
+          echo "Bump: ${{ github.event.inputs.bump }}"
+          echo "Target version: ${{ steps.bump.outputs.target_version }}"
+          echo "Changed: ${{ steps.bump.outputs.changed }}"

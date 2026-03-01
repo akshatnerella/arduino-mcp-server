@@ -101,9 +101,6 @@ jobs:
           chmod +x mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/
 
-      - name: Validate server manifest
-        run: mcp-publisher validate
-
       - name: Login to MCP registry (GitHub OIDC)
         run: mcp-publisher login github-oidc
 

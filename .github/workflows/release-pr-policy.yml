@@ -13,9 +13,8 @@ on:
       - unlabeled
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 jobs:
   require-release-source-branch:
@@ -51,149 +50,6 @@ jobs:
             git fetch --no-tags --depth=2000 upstream "${{ github.base_ref }}"
           fi
           git cat-file -e "$BASE_SHA^{commit}"
-
-      - name: Ensure default bump label when missing
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const issue_number = context.payload.pull_request?.number;
-            if (!issue_number) {
-              core.info("No pull request number in context; skipping default label step.");
-              return;
-            }
-
-            const labels = (context.payload.pull_request?.labels || [])
-              .map((l) => String(l?.name || "").toLowerCase());
-            const bumpAliases = new Set([
-              "major", "release:major", "release/major", "version:major", "version/major",
-              "minor", "release:minor", "release/minor", "version:minor", "version/minor",
-              "patch", "release:patch", "release/patch", "version:patch", "version/patch"
-            ]);
-            const hasBumpLabel = labels.some((label) => bumpAliases.has(label));
-
-            if (hasBumpLabel) {
-              core.info("Bump label already present; no default label needed.");
-              return;
-            }
-
-            try {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                labels: ["release/patch"]
-              });
-              core.info("Added default label release/patch.");
-            } catch (error) {
-              if (error?.status === 403) {
-                core.warning("No permission to add labels with this GITHUB_TOKEN in this PR context. Continuing without auto-label.");
-                return;
-              }
-              throw error;
-            }
-
-      - name: Auto-bump versions from PR label
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_REF: ${{ github.head_ref }}
-          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
-        run: |
-          node <<'NODE'
-          const fs = require("node:fs");
-          const { execSync } = require("node:child_process");
-
-          const baseSha = process.env.BASE_SHA;
-          const headRef = process.env.HEAD_REF || "";
-          const labels = JSON.parse(process.env.PR_LABELS_JSON || "[]").map((l) => String(l).toLowerCase());
-
-          const inferExpectedBumpFromLabels = (allLabels) => {
-            const normalized = new Set(allLabels);
-            const candidates = [
-              ["major", ["major", "release:major", "release/major", "version:major", "version/major"]],
-              ["minor", ["minor", "release:minor", "release/minor", "version:minor", "version/minor"]],
-              ["patch", ["patch", "release:patch", "release/patch", "version:patch", "version/patch"]]
-            ];
-            const matched = candidates
-              .filter(([, keys]) => keys.some((k) => normalized.has(k)))
-              .map(([name]) => name);
-            if (matched.length === 0) {
-              return { expected: "patch", matched, defaulted: true };
-            }
-            if (matched.length !== 1) {
-              return { expected: null, matched, defaulted: false };
-            }
-            return { expected: matched[0], matched, defaulted: false };
-          };
-
-          const bump = (baseVersion, bumpType) => {
-            const [core] = baseVersion.split("-", 1);
-            const [major, minor, patch] = core.split(".").map((n) => Number.parseInt(n, 10));
-            if (bumpType === "major") return `${major + 1}.0.0`;
-            if (bumpType === "minor") return `${major}.${minor + 1}.0`;
-            return `${major}.${minor}.${patch + 1}`;
-          };
-
-          const { expected, defaulted } = inferExpectedBumpFromLabels(labels);
-          if (!expected) {
-            console.log("No single valid bump label found. Skipping auto-bump.");
-            process.exit(0);
-          }
-          if (defaulted) {
-            console.log("No bump label found in event payload; defaulting to patch.");
-          }
-
-          const basePkg = JSON.parse(execSync(`git show ${baseSha}:package.json`, { encoding: "utf8" }));
-          const targetVersion = bump(basePkg.version, expected);
-
-          const pkgPath = "package.json";
-          const serverPath = "server.json";
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-          const server = JSON.parse(fs.readFileSync(serverPath, "utf8"));
-
-          const matchingPackage = Array.isArray(server.packages)
-            ? server.packages.find((p) => p.identifier === pkg.name) ?? server.packages[0]
-            : null;
-
-          const alreadyAligned =
-            pkg.version === targetVersion &&
-            server.version === targetVersion &&
-            matchingPackage &&
-            matchingPackage.version === targetVersion;
-
-          if (alreadyAligned) {
-            console.log(`Versions already aligned to ${targetVersion}. No auto-bump needed.`);
-            process.exit(0);
-          }
-
-          console.log(`Auto-bumping versions to ${targetVersion} from label ${expected}.`);
-          execSync(`npm version ${targetVersion} --no-git-tag-version`, { stdio: "inherit" });
-
-          const updatedServer = JSON.parse(fs.readFileSync(serverPath, "utf8"));
-          updatedServer.version = targetVersion;
-          if (Array.isArray(updatedServer.packages) && updatedServer.packages.length > 0) {
-            const idx = updatedServer.packages.findIndex((p) => p.identifier === pkg.name);
-            const packageIndex = idx >= 0 ? idx : 0;
-            updatedServer.packages[packageIndex].version = targetVersion;
-          }
-          fs.writeFileSync(serverPath, `${JSON.stringify(updatedServer, null, 2)}\n`);
-
-          execSync('git config user.name "github-actions[bot]"');
-          execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
-          execSync("git add package.json package-lock.json server.json");
-
-          try {
-            execSync("git diff --cached --quiet");
-            console.log("No changes staged after auto-bump.");
-            process.exit(0);
-          } catch {
-            // staged changes exist
-          }
-
-          execSync(`git commit -m "chore(release): auto-bump version to ${targetVersion} from ${expected} label"`, { stdio: "inherit" });
-          execSync(`git push origin HEAD:${headRef}`, { stdio: "inherit" });
-          NODE
 
       - name: Validate release version policy
         env:
@@ -275,15 +131,11 @@ jobs:
               .filter(([, keys]) => keys.some((k) => normalized.has(k)))
               .map(([name]) => name);
 
-            if (matched.length === 0) {
-              return { expected: "patch", matched, defaulted: true };
-            }
-
             if (matched.length !== 1) {
-              return { expected: null, matched, defaulted: false };
+              return { expected: null, matched };
             }
 
-            return { expected: matched[0], matched, defaulted: false };
+            return { expected: matched[0], matched };
           };
 
           const baseVersionRaw = readVersionFromCommit(baseSha, "package.json");
@@ -337,11 +189,7 @@ jobs:
             }
           }
 
-          const {
-            expected: expectedBump,
-            matched: matchedBumpLabels,
-            defaulted: defaultedBumpLabel
-          } = inferExpectedBumpFromLabels(labels);
+          const { expected: expectedBump, matched: matchedBumpLabels } = inferExpectedBumpFromLabels(labels);
           if (!expectedBump) {
             errors.push(
               `PR must have exactly one bump label: patch/minor/major (or release:patch|minor|major). Found: ${matchedBumpLabels.join(", ") || "none"}.`
@@ -353,9 +201,6 @@ jobs:
                 `Version bump does not match label. Label expects ${expectedBump}, but base=${baseVersion} to head=${headVersion} is ${actualBump}.`
               );
             }
-          }
-          if (defaultedBumpLabel) {
-            console.log("No bump label found in event payload; treating expected bump as patch.");
           }
 
           if (errors.length > 0) {
