@@ -1,0 +1,13 @@
+.git
+.github
+_ref_mcp_servers
+src
+dist
+tsconfig.json
+.npm-cache
+node_modules/.package-lock
+node_modules/@types
+node_modules/tsx
+node_modules/typescript
+node_modules/@esbuild
+node_modules/esbuild

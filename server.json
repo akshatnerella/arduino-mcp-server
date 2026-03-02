@@ -3,7 +3,7 @@
   "name": "io.github.akshatnerella/arduino-mcp-server",
   "title": "Arduino MCP Server",
   "description": "Arduino MCP server for CLI setup, board detection, compile/upload, serial monitoring, and pin refs.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "websiteUrl": "https://github.com/akshatnerella/arduino-mcp-server",
   "repository": {
     "id": "1169097404",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "arduino-mcp-server",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "transport": {
         "type": "stdio"
       },

@@ -1,0 +1,168 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-02/manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "arduino-mcp-server",
+  "display_name": "Arduino MCP Server",
+  "version": "0.2.7",
+  "description": "MCP server for Arduino CLI setup, board detection, compile/upload workflows, serial sessions, and board reference lookup.",
+  "long_description": "Arduino MCP Server provides safe, structured access to arduino-cli for setup, board detection, compile/upload, serial monitoring, and board metadata workflows.",
+  "author": {
+    "name": "Akshat Nerella",
+    "url": "https://github.com/akshatnerella"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/akshatnerella/arduino-mcp-server"
+  },
+  "homepage": "https://github.com/akshatnerella/arduino-mcp-server",
+  "documentation": "https://github.com/akshatnerella/arduino-mcp-server#readme",
+  "privacy_policies": [
+    "https://github.com/akshatnerella/arduino-mcp-server/blob/main/PRIVACY.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "arduino",
+    "arduino-cli",
+    "serial",
+    "hardware"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=20.0.0"
+    },
+    "claude_desktop": ">=1.0.0"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "build/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/build/index.js"
+      ],
+      "env": {
+        "ARDUINO_CLI_PATH": "${user_config.arduino_cli_path}",
+        "ARDUINO_SKETCH_ROOT": "${user_config.arduino_sketch_root}"
+      }
+    }
+  },
+  "user_config": {
+    "arduino_cli_path": {
+      "type": "string",
+      "title": "Arduino CLI Path",
+      "description": "Path or command name for arduino-cli.",
+      "default": "arduino-cli",
+      "required": false
+    },
+    "arduino_sketch_root": {
+      "type": "directory",
+      "title": "Sketch Root",
+      "description": "Optional absolute directory that limits sketch compile/upload paths.",
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "arduino_cli_doctor",
+      "description": "Check whether arduino-cli is available and return installation guidance when missing."
+    },
+    {
+      "name": "install_arduino_cli",
+      "description": "Install arduino-cli using platform-specific package manager or script options."
+    },
+    {
+      "name": "detect_hardware",
+      "description": "Detect connected hardware and infer likely board and FQBN candidates."
+    },
+    {
+      "name": "ensure_core_installed",
+      "description": "Ensure the required Arduino core is installed, with optional automatic installation."
+    },
+    {
+      "name": "compile_sketch",
+      "description": "Compile an Arduino sketch for a specific board FQBN."
+    },
+    {
+      "name": "upload_sketch",
+      "description": "Upload a sketch to a connected board and serial port."
+    },
+    {
+      "name": "upload_and_wait_ready",
+      "description": "Upload a sketch and wait for a serial readiness pattern after reboot."
+    },
+    {
+      "name": "read_serial_snapshot",
+      "description": "Capture serial output from a port for a bounded duration."
+    },
+    {
+      "name": "safety_preflight",
+      "description": "Run an electrical safety preflight check before write or upload actions."
+    },
+    {
+      "name": "serial_open_session",
+      "description": "Open a stateful serial session with coordinated port locking."
+    },
+    {
+      "name": "serial_list_sessions",
+      "description": "List active serial sessions and current lock ownership."
+    },
+    {
+      "name": "serial_read",
+      "description": "Read buffered bytes from an active serial session."
+    },
+    {
+      "name": "serial_expect",
+      "description": "Wait for a text pattern in a serial session buffer with timeout."
+    },
+    {
+      "name": "serial_write",
+      "description": "Write bytes to a serial session with safety preflight enforcement."
+    },
+    {
+      "name": "serial_close_session",
+      "description": "Close an active serial session and release its lock."
+    },
+    {
+      "name": "list_connected_boards",
+      "description": "List connected Arduino boards and serial ports detected by arduino-cli."
+    },
+    {
+      "name": "list_supported_boards",
+      "description": "List installable board definitions from the local Arduino index."
+    },
+    {
+      "name": "list_serial_ports",
+      "description": "List serial ports and any board metadata detected by arduino-cli."
+    },
+    {
+      "name": "get_board_details",
+      "description": "Fetch detailed board metadata for a given FQBN."
+    },
+    {
+      "name": "list_board_reference",
+      "description": "List local board reference entries with pin and spec metadata."
+    },
+    {
+      "name": "search_board_reference",
+      "description": "Search board reference entries by board name, alias, id, or FQBN."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "arduino-cli-bootstrap-policy",
+      "description": "Strict setup policy to bootstrap missing arduino-cli installations.",
+      "text": "Run arduino_cli_doctor first, install Arduino CLI if missing, set ARDUINO_CLI_PATH when needed, re-check until installed, then continue with detect/compile/upload tools."
+    },
+    {
+      "name": "arduino-setup-assistant",
+      "description": "Template prompt for board wiring and upload guidance.",
+      "text": "Given a board and sensor/module, produce safe wiring, voltage notes, a minimal sketch, and compile/upload steps via arduino-cli."
+    }
+  ]
+}

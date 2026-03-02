@@ -66,9 +66,13 @@ jobs:
           const labels = JSON.parse(process.env.PR_LABELS_JSON || "[]").map((l) => String(l).toLowerCase());
 
           const readVersionFromCommit = (sha, filePath) => {
-            const content = execSync(`git show ${sha}:${filePath}`, { encoding: "utf8" });
-            const parsed = JSON.parse(content);
-            return parsed.version;
+            try {
+              const content = execSync(`git show ${sha}:${filePath}`, { encoding: "utf8" });
+              const parsed = JSON.parse(content);
+              return parsed.version;
+            } catch {
+              return null;
+            }
           };
 
           const normalize = (value) => {
@@ -142,8 +146,11 @@ jobs:
           const headPkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
           const baseServerVersionRaw = readVersionFromCommit(baseSha, "server.json");
           const headServer = JSON.parse(fs.readFileSync("server.json", "utf8"));
+          const baseManifestVersionRaw = readVersionFromCommit(baseSha, "manifest.json");
+          const headManifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
           const headVersionRaw = headPkg.version;
           const headServerVersionRaw = headServer.version;
+          const headManifestVersionRaw = headManifest.version;
           const headServerPackageVersion = (() => {
             const targetPkg = Array.isArray(headServer.packages)
               ? headServer.packages.find((p) => p.identifier === headPkg.name) ?? headServer.packages[0]
@@ -155,6 +162,8 @@ jobs:
           const headVersion = normalize(headVersionRaw);
           const baseServerVersion = normalize(baseServerVersionRaw);
           const headServerVersion = normalize(headServerVersionRaw);
+          const baseManifestVersion = normalize(baseManifestVersionRaw);
+          const headManifestVersion = normalize(headManifestVersionRaw);
           const headServerPkgVersion = normalize(headServerPackageVersion);
 
           const errors = [];
@@ -171,9 +180,15 @@ jobs:
           if (!headServerPkgVersion) {
             errors.push(`Head server.json packages[0].version is invalid semver: ${String(headServerPackageVersion)}`);
           }
+          if (!headManifestVersion) {
+            errors.push(`Head manifest.json version is invalid semver: ${String(headManifestVersionRaw)}`);
+          }
 
           if (!baseServerVersion) {
             errors.push(`Base server.json version is invalid semver: ${String(baseServerVersionRaw)}`);
+          }
+          if (baseManifestVersionRaw !== null && !baseManifestVersion) {
+            errors.push(`Base manifest.json version is invalid semver: ${String(baseManifestVersionRaw)}`);
           }
 
           if (headVersion && headServerVersion && headVersion !== headServerVersion) {
@@ -181,6 +196,9 @@ jobs:
           }
           if (headVersion && headServerPkgVersion && headVersion !== headServerPkgVersion) {
             errors.push(`package.json version (${headVersion}) must match server.json packages[0].version (${headServerPkgVersion}).`);
+          }
+          if (headVersion && headManifestVersion && headVersion !== headManifestVersion) {
+            errors.push(`package.json version (${headVersion}) must match manifest.json version (${headManifestVersion}).`);
           }
 
           if (baseVersion && headVersion) {
