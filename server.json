@@ -1,14 +1,14 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.akshatnerella/arduino-mcp-server",
+  "name": "io.github.hardware-mcp/arduino-mcp-server",
   "title": "Arduino MCP Server",
   "description": "Arduino MCP server for CLI setup, board detection, compile/upload, serial monitoring, and pin refs.",
   "version": "0.2.7",
-  "websiteUrl": "https://github.com/akshatnerella/arduino-mcp-server",
+  "websiteUrl": "https://github.com/hardware-mcp/arduino-mcp-server",
   "repository": {
     "id": "1169097404",
     "source": "github",
-    "url": "https://github.com/akshatnerella/arduino-mcp-server"
+    "url": "https://github.com/hardware-mcp/arduino-mcp-server"
   },
   "packages": [
     {
