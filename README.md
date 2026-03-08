@@ -1,37 +1,37 @@
-# Arduino MCP Server
+# arduino-mcp-server
 
-Arduino MCP server for `arduino-cli` workflows: dependency checks/install, hardware detection, compile/upload, serial monitoring, board reference lookup, and safety preflight checks.
+[![npm version](https://img.shields.io/npm/v/arduino-mcp-server)](https://www.npmjs.com/package/arduino-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
-This repository includes:
-- `server.json` for MCP Registry metadata.
-- `manifest.json` for Claude Desktop MCP bundle (`.mcpb`) packaging.
+**Give your AI assistant full control over Arduino — compile, upload, monitor serial, and verify wiring safety, all through natural language.**
 
-## Description
-Use this server to automate Arduino setup and development tasks from an MCP client while keeping operations local to your machine.
+Part of the [HardwareMCP](https://github.com/hardware-mcp) ecosystem — open-source MCP servers that bridge AI to physical hardware.
 
-## Features
-- Arduino CLI dependency diagnosis and guided installation
-- Board/port detection with FQBN inference
-- Core installation checks and optional auto-install
-- Sketch compile/upload workflows
-- Upload-and-wait serial readiness flow
-- Stateful serial sessions (`open`, `read`, `expect`, `write`, `close`)
-- Electrical safety preflight checks
-- Board reference resource and setup prompts
+---
 
-## Requirements
-- Node.js 20+
-- `arduino-cli` on `PATH`, or install/configure it through provided tools
+## What this does
 
-## Installation
-Install from npm:
+AI assistants can control Jira, GitHub, and databases. They can't talk to a microcontroller — until now.
 
+`arduino-mcp-server` wraps `arduino-cli` into an MCP server so your AI can:
+
+- **Detect** connected boards and ports automatically
+- **Compile and upload** sketches without touching the terminal
+- **Monitor serial output** with stateful sessions (open, read, expect, write, close)
+- **Run electrical safety checks** before sending commands to hardware
+- **Manage dependencies** — cores, libraries, and CLI installation
+
+---
+
+## Quick Start
+
+**Install:**
 ```bash
 npm install -g arduino-mcp-server
 ```
 
-Add to Claude Desktop (`claude_desktop_config.json`):
-
+**Add to Claude Desktop** (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -40,125 +40,81 @@ Add to Claude Desktop (`claude_desktop_config.json`):
       "args": ["-y", "arduino-mcp-server"],
       "env": {
         "ARDUINO_CLI_PATH": "arduino-cli",
-        "ARDUINO_SKETCH_ROOT": "D:/Projects/arduino-sketches"
+        "ARDUINO_SKETCH_ROOT": "/path/to/your/sketches"
       }
     }
   }
 }
 ```
 
+Requires [arduino-cli](https://arduino.github.io/arduino-cli/) on your PATH, or let the server install it for you.
+
+---
+
+## What you can say
+
+**Bootstrap from scratch:**
+> "Check if Arduino CLI is installed and set everything up for an Arduino Uno."
+
+**Compile and upload:**
+> "Compile my Blink sketch and upload it to the Uno on COM6."
+
+**Serial monitoring:**
+> "Open serial on COM6 at 115200 and wait until the device prints READY."
+
+**Safety-first workflows:**
+> "Run a safety preflight for an Arduino Uno with 5V on pin 13 at 25mA before I send commands."
+
+---
+
+## Tools
+
+| Tool | What it does |
+|------|-------------|
+| `arduino_cli_doctor` | Check Arduino CLI installation and version |
+| `install_arduino_cli` | Guide through arduino-cli installation |
+| `detect_hardware` | Detect connected boards and infer FQBNs |
+| `list_connected_boards` | List all connected Arduino boards |
+| `list_serial_ports` | List available serial ports |
+| `ensure_core_installed` | Check/install board cores |
+| `compile_sketch` | Compile a sketch for a target board |
+| `upload_sketch` | Upload compiled sketch to a board |
+| `upload_and_wait_ready` | Upload and wait for device ready signal |
+| `serial_open_session` | Open a stateful serial session |
+| `serial_read` | Read buffered serial data |
+| `serial_expect` | Wait for a pattern in serial output |
+| `serial_write` | Send data over serial |
+| `serial_close_session` | Close a serial session |
+| `serial_list_sessions` | List active serial sessions |
+| `read_serial_snapshot` | Quick one-shot serial read |
+| `safety_preflight` | Electrical safety check before hardware ops |
+| `get_board_details` | Get pin/capability details for a board |
+| `list_supported_boards` | List all boards arduino-cli supports |
+| `list_board_reference` | Browse board pin reference |
+| `search_board_reference` | Search board reference by keyword |
+
+**Resources:**
+- `arduino://boards/reference` — structured board pin/capability reference
+
+**Prompts:**
+- `arduino-cli-bootstrap-policy` — policy for arduino-cli setup behavior
+- `arduino-setup-assistant` — guided Arduino environment setup
+
+---
+
 ## Configuration
-- `ARDUINO_CLI_PATH`: Arduino CLI command/path (default: `arduino-cli`)
-- `ARDUINO_SKETCH_ROOT`: optional absolute root restricting sketch compile/upload paths
 
-## Usage Examples
-Example 1: Bootstrap missing Arduino CLI
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARDUINO_CLI_PATH` | `arduino-cli` | Path to arduino-cli binary |
+| `ARDUINO_SKETCH_ROOT` | *(none)* | Restrict sketch paths to this directory |
 
-User prompt:
-```text
-Check if Arduino CLI is installed and install it automatically if missing.
-```
-
-Expected tool sequence:
-1. `arduino_cli_doctor`
-2. `install_arduino_cli` (when missing)
-3. `arduino_cli_doctor` (re-check)
-
-Example 2: Compile and upload a sketch
-
-User prompt:
-```text
-Compile D:/Projects/arduino-sketches/Blink for arduino:avr:uno and upload it to COM6.
-```
-
-Expected tool sequence:
-1. `compile_sketch` with sketch path + fqbn
-2. `upload_sketch` with sketch path + fqbn + port
-
-Example 3: Open serial monitor session and wait for ready text
-
-User prompt:
-```text
-Open serial on COM6 at 115200 and wait until the device prints READY.
-```
-
-Expected tool sequence:
-1. `serial_open_session`
-2. `serial_expect`
-3. `serial_read` (optional for additional output)
-4. `serial_close_session` (when done)
-
-Example 4: Safety preflight before writing to device
-
-User prompt:
-```text
-Before sending commands over serial, run a safety preflight for an Arduino Uno with my wiring details.
-```
-
-Expected tool sequence:
-1. `safety_preflight`
-2. `serial_write` only if preflight does not block
-
-## MCP Surface
-Tools:
-- `arduino_cli_doctor`
-- `install_arduino_cli`
-- `detect_hardware`
-- `ensure_core_installed`
-- `compile_sketch`
-- `upload_sketch`
-- `upload_and_wait_ready`
-- `read_serial_snapshot`
-- `safety_preflight`
-- `serial_open_session`
-- `serial_list_sessions`
-- `serial_read`
-- `serial_expect`
-- `serial_write`
-- `serial_close_session`
-- `list_connected_boards`
-- `list_supported_boards`
-- `list_serial_ports`
-- `get_board_details`
-- `list_board_reference`
-- `search_board_reference`
-
-Resources:
-- `arduino://boards/reference`
-
-Prompts:
-- `arduino-cli-bootstrap-policy`
-- `arduino-setup-assistant`
-
-## MCP Bundle (MCPB)
-Build and package:
-
-```bash
-npm run build
-npm run mcpb:validate
-npm run mcpb:pack
-```
-
-Notes:
-- `manifest.json` is consumed by `mcpb`.
-- `.mcpbignore` excludes dev/reference files from bundle packaging.
-- Bundle output is written as `<name>.mcpb` in the current directory by default.
-
-## Privacy Policy
-- Policy URL: https://github.com/akshatnerella/arduino-mcp-server/blob/main/PRIVACY.md
-- Local copy: [PRIVACY.md](PRIVACY.md)
-
-Summary:
-- No built-in telemetry or analytics.
-- Operations are local unless you explicitly invoke tooling that downloads dependencies.
-- Data handling by your MCP host application is governed by that host's policies.
-
-## Support
-- GitHub Issues: https://github.com/akshatnerella/arduino-mcp-server/issues
+---
 
 ## Development
+
 ```bash
-git clone https://github.com/akshatnerella/arduino-mcp-server
+git clone https://github.com/hardware-mcp/arduino-mcp-server
 cd arduino-mcp-server
 npm install
 npm run typecheck
@@ -166,9 +122,18 @@ npm run build
 npm run dev
 ```
 
-## Release
-- PRs into `main` must come from `release/*` branches.
-- PRs must include exactly one bump label: `patch`, `minor`, or `major`.
+---
+
+## Part of HardwareMCP
+
+This server is part of the [HardwareMCP](https://github.com/hardware-mcp) ecosystem — a collection of MCP servers that give AI assistants real control over physical hardware.
+
+---
 
 ## License
-MIT, see [LICENSE](LICENSE).
+
+MIT — see [LICENSE](LICENSE).
+
+## Support
+
+[Open an issue](https://github.com/hardware-mcp/arduino-mcp-server/issues)
