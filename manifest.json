@@ -3,21 +3,21 @@
   "manifest_version": "0.3",
   "name": "arduino-mcp-server",
   "display_name": "Arduino MCP Server",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "MCP server for Arduino CLI setup, board detection, compile/upload workflows, serial sessions, and board reference lookup.",
   "long_description": "Arduino MCP Server provides safe, structured access to arduino-cli for setup, board detection, compile/upload, serial monitoring, and board metadata workflows.",
   "author": {
     "name": "Akshat Nerella",
-    "url": "https://github.com/akshatnerella"
+    "url": "https://github.com/hardware-mcp"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/akshatnerella/arduino-mcp-server"
+    "url": "https://github.com/hardware-mcp/arduino-mcp-server"
   },
-  "homepage": "https://github.com/akshatnerella/arduino-mcp-server",
-  "documentation": "https://github.com/akshatnerella/arduino-mcp-server#readme",
+  "homepage": "https://github.com/hardware-mcp/arduino-mcp-server",
+  "documentation": "https://github.com/hardware-mcp/arduino-mcp-server#readme",
   "privacy_policies": [
-    "https://github.com/akshatnerella/arduino-mcp-server/blob/main/PRIVACY.md"
+    "https://github.com/hardware-mcp/arduino-mcp-server/blob/main/PRIVACY.md"
   ],
   "license": "MIT",
   "keywords": [
