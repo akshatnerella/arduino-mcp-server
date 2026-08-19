@@ -1,5 +1,5 @@
 {
-  "version": "2026-02-28",
+  "version": "2026-08-18",
   "boards": [
     {
       "id": "arduino_uno_r3",
@@ -245,6 +245,198 @@
       "referenceLinks": [
         "https://docs.espressif.com/projects/arduino-esp32/en/latest/",
         "https://randomnerdtutorials.com/esp32-pinout-reference-gpios/"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32s3",
+      "displayName": "Seeed XIAO ESP32S3",
+      "aliases": ["xiao esp32s3", "xiao_esp32s3", "xiao esp32-s3", "seeed xiao esp32-s3", "seeeduino xiao esp32s3"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32S3"],
+      "mcu": "ESP32-S3R8 (dual-core Xtensa LX7 @ 240MHz, 8MB PSRAM, 8MB Flash)",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C; 3.7V Li-Po via onboard JST battery connector (on-board regulation to 3.3V logic)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0", "TOUCH1"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1", "TOUCH2"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2", "TOUCH3", "JTAG_STRAP"] },
+        { "name": "D3", "capabilities": ["ADC1_CH3", "TOUCH4"] },
+        { "name": "D4", "capabilities": ["ADC1_CH4", "TOUCH5", "I2C_SDA"] },
+        { "name": "D5", "capabilities": ["ADC1_CH5", "TOUCH6", "I2C_SCL"] },
+        { "name": "D6", "capabilities": ["UART0_TX"] },
+        { "name": "D7", "capabilities": ["UART0_RX", "SPI_SS"] },
+        { "name": "D8", "capabilities": ["ADC1_CH6", "TOUCH7", "SPI_SCK"] },
+        { "name": "D9", "capabilities": ["ADC1_CH7", "TOUCH8", "SPI_MISO"] },
+        { "name": "D10", "capabilities": ["ADC1_CH8", "TOUCH9", "SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2"] },
+        { "name": "D3", "capabilities": ["ADC1_CH3"] },
+        { "name": "D4", "capabilities": ["ADC1_CH4"] },
+        { "name": "D5", "capabilities": ["ADC1_CH5"] },
+        { "name": "D8", "capabilities": ["ADC1_CH6"] },
+        { "name": "D9", "capabilities": ["ADC1_CH7"] },
+        { "name": "D10", "capabilities": ["ADC1_CH8"] }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D7" },
+      "uart": { "hardware": ["D6/D7"] },
+      "notes": [
+        "Logic is 3.3V only; do not drive pins with 5V.",
+        "D2 (GPIO3) is a JTAG/boot strapping pin; avoid holding it low externally during reset.",
+        "Onboard native USB (USB CDC) is used for flashing and Serial by default; hardware UART0 is also broken out on D6 (TX) / D7 (RX).",
+        "SPI SS defaults to GPIO44, which is shared with the D7/UART0 RX pin in the esp32:esp32 Arduino core's pin map; reassign chip-select in software if using SPI and UART0 together.",
+        "Onboard JST 1.0mm connector supports 3.7V single-cell Li-Po/Li-ion charging; do not connect higher-voltage battery packs directly."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+        "https://github.com/espressif/arduino-esp32/blob/master/variants/XIAO_ESP32S3/pins_arduino.h"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32c3",
+      "displayName": "Seeed XIAO ESP32C3",
+      "aliases": ["xiao esp32c3", "xiao_esp32c3", "xiao esp32-c3", "seeed xiao esp32-c3"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32C3"],
+      "mcu": "ESP32-C3FN4 (single-core RISC-V @ 160MHz, 4MB Flash)",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C; 3.7V Li-Po via onboard JST battery connector (on-board regulation to 3.3V logic)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH2", "BOOT_STRAP"] },
+        { "name": "D1", "capabilities": ["ADC1_CH3"] },
+        { "name": "D2", "capabilities": ["ADC1_CH4"] },
+        { "name": "D3" },
+        { "name": "D4", "capabilities": ["I2C_SDA"] },
+        { "name": "D5", "capabilities": ["I2C_SCL"] },
+        { "name": "D6", "capabilities": ["UART0_TX"] },
+        { "name": "D7", "capabilities": ["UART0_RX", "SPI_SS"] },
+        { "name": "D8", "capabilities": ["SPI_SCK", "BOOT_STRAP"] },
+        { "name": "D9", "capabilities": ["SPI_MISO", "BOOT_STRAP"] },
+        { "name": "D10", "capabilities": ["SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH2"] },
+        { "name": "D1", "capabilities": ["ADC1_CH3"] },
+        { "name": "D2", "capabilities": ["ADC1_CH4"] }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D7" },
+      "uart": { "hardware": ["D6/D7"] },
+      "notes": [
+        "Logic is 3.3V only; do not drive pins with 5V.",
+        "D0 (GPIO2), D8 (GPIO8), and D9 (GPIO9) are chip boot-strapping pins. The onboard BOOT button ties D9 to GND, so use D9 only as a switch/button input, and keep D8 pulled high if driving it externally at reset.",
+        "D6 (GPIO21/U0TXD) should be used as an output only; using it as an input can pull excess current.",
+        "Onboard JST 1.0mm connector supports 3.7V single-cell Li-Po/Li-ion charging; do not connect higher-voltage battery packs directly."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/",
+        "https://wiki.seeedstudio.com/exp32c3_d9_d6_d8/",
+        "https://github.com/espressif/arduino-esp32/blob/master/variants/XIAO_ESP32C3/pins_arduino.h"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32c6",
+      "displayName": "Seeed XIAO ESP32C6",
+      "aliases": ["xiao esp32c6", "xiao_esp32c6", "xiao esp32-c6", "seeed xiao esp32-c6"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32C6"],
+      "mcu": "ESP32-C6 (RISC-V HP core @ 160MHz + LP core @ 20MHz, 4MB Flash, Wi-Fi 6 / BLE 5.3 / 802.15.4)",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C; 3.7V Li-Po via onboard JST battery connector (on-board regulation to 3.3V logic)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2"] },
+        { "name": "D3", "capabilities": ["SPI_SS"] },
+        { "name": "D4", "capabilities": ["I2C_SDA"] },
+        { "name": "D5", "capabilities": ["I2C_SCL"] },
+        { "name": "D6", "capabilities": ["UART0_TX"] },
+        { "name": "D7", "capabilities": ["UART0_RX"] },
+        { "name": "D8", "capabilities": ["SPI_SCK"] },
+        { "name": "D9", "capabilities": ["SPI_MISO"] },
+        { "name": "D10", "capabilities": ["SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2"] }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D3" },
+      "uart": { "hardware": ["D6/D7"] },
+      "notes": [
+        "Logic is 3.3V only; do not drive pins with 5V.",
+        "The onboard LED_BUILTIN (GPIO15) is also a chip strapping pin; it is not broken out to a header pin, but avoid clamping it externally.",
+        "Supports 2.4GHz Wi-Fi 6, Bluetooth 5.3 (LE), and 802.15.4 (Zigbee/Thread, Matter-capable) via the onboard ceramic antenna or U.FL connector.",
+        "Onboard JST 1.0mm connector supports 3.7V single-cell Li-Po/Li-ion charging; do not connect higher-voltage battery packs directly."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32c6_getting_started/",
+        "https://github.com/espressif/arduino-esp32/blob/master/variants/XIAO_ESP32C6/pins_arduino.h"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32s3_plus",
+      "displayName": "Seeed XIAO ESP32S3 Plus",
+      "aliases": ["xiao esp32s3 plus", "xiao_esp32s3_plus", "xiao esp32-s3 plus", "seeed xiao esp32-s3 plus"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32S3_Plus"],
+      "mcu": "ESP32-S3R8 (dual-core Xtensa LX7 @ 240MHz, 8MB PSRAM, 16MB Flash)",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C; 3.7V Li-Po via onboard JST battery connector (on-board regulation to 3.3V logic)",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0", "TOUCH1"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1", "TOUCH2"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2", "TOUCH3", "JTAG_STRAP"] },
+        { "name": "D3", "capabilities": ["ADC1_CH3", "TOUCH4"] },
+        { "name": "D4", "capabilities": ["ADC1_CH4", "TOUCH5", "I2C_SDA"] },
+        { "name": "D5", "capabilities": ["ADC1_CH5", "TOUCH6", "I2C_SCL"] },
+        { "name": "D6", "capabilities": ["UART0_TX"] },
+        { "name": "D7", "capabilities": ["UART0_RX", "SPI_SS"] },
+        { "name": "D8", "capabilities": ["ADC1_CH6", "TOUCH7", "SPI_SCK"] },
+        { "name": "D9", "capabilities": ["ADC1_CH7", "TOUCH8", "SPI_MISO"] },
+        { "name": "D10", "capabilities": ["ADC1_CH8", "TOUCH9", "SPI_MOSI"] },
+        { "name": "D11", "capabilities": ["I2S_SD", "CAM_VSYNC"] },
+        { "name": "D12", "capabilities": ["I2S_SCK", "JTAG_MTCK", "CAM_SCL"] },
+        { "name": "D13", "capabilities": ["I2S_WS", "JTAG_MTDO", "CAM_SDA"] },
+        { "name": "D14", "capabilities": ["UART1_RX", "JTAG_MTDI"] },
+        { "name": "D15", "capabilities": ["UART1_TX", "JTAG_MTMS"] },
+        { "name": "D16", "capabilities": ["CAM_XMCLK", "BATTERY_ADC"] },
+        { "name": "D17", "capabilities": ["SPI1_SCK", "CAM_PCLK"] },
+        { "name": "D18", "capabilities": ["SPI1_MISO", "CAM_Y_D7"] },
+        { "name": "D19", "capabilities": ["SPI1_MOSI", "CAM_Y_D6"] }
+      ],
+      "analogPins": [
+        { "name": "D0", "capabilities": ["ADC1_CH0"] },
+        { "name": "D1", "capabilities": ["ADC1_CH1"] },
+        { "name": "D2", "capabilities": ["ADC1_CH2"] },
+        { "name": "D3", "capabilities": ["ADC1_CH3"] },
+        { "name": "D4", "capabilities": ["ADC1_CH4"] },
+        { "name": "D5", "capabilities": ["ADC1_CH5"] },
+        { "name": "D8", "capabilities": ["ADC1_CH6"] },
+        { "name": "D9", "capabilities": ["ADC1_CH7"] },
+        { "name": "D10", "capabilities": ["ADC1_CH8"] },
+        { "name": "D16", "capabilities": ["BATTERY_ADC"] }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9", "D10", "D11", "D12", "D13", "D16", "D17", "D18", "D19"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D7" },
+      "uart": { "hardware": ["D6/D7", "D14/D15"] },
+      "notes": [
+        "Logic is 3.3V only; do not drive pins with 5V.",
+        "D2 (GPIO3) is a JTAG/boot strapping pin.",
+        "D11-D15 are multiplexed with I2S, JTAG (MTCK/MTDO/MTDI/MTMS), and DVP camera header signals; consult Seeed's XIAO ESP32-S3 pin multiplexing guide before repurposing them.",
+        "A second SPI bus is available on D17 (SCK1) / D18 (MISO1) / D19 (MOSI1); a second hardware UART (UART1) is available on D14 (RX1) / D15 (TX1).",
+        "D16 (GPIO10) doubles as the onboard battery voltage-sense ADC (ADC_BAT/BAT_VOLT_PIN); avoid dedicating it to unrelated peripherals if battery monitoring is needed.",
+        "Adds 8 extra GPIO and doubles flash to 16MB versus the base XIAO ESP32S3, primarily for camera/mic accessory headers.",
+        "Onboard JST 1.0mm connector supports 3.7V single-cell Li-Po/Li-ion charging; do not connect higher-voltage battery packs directly."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+        "https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/",
+        "https://github.com/espressif/arduino-esp32/blob/master/variants/XIAO_ESP32S3_Plus/pins_arduino.h"
       ]
     }
   ]
