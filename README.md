@@ -102,6 +102,28 @@ Requires [arduino-cli](https://arduino.github.io/arduino-cli/) on your PATH, or 
 
 ---
 
+## Safety preflight guardrails
+
+`safety_preflight` (and the `safetyContext` passed to `upload_sketch`, `upload_and_wait_ready`, and `serial_write`) now also covers battery and ESP32-family pin footguns, driven by small, extensible data tables rather than hardcoded to any one board:
+
+**Battery charge-rate (C-rate) check** — pass a `battery` object (`capacityMah`, `chargeCurrentMa`, `chemistry`) and the check computes `chargeCurrentMa / batteryCapacityMah` and flags it:
+- **`BATTERY_CRATE_UNSAFE`** (hard, blocking) above 1C
+- **`BATTERY_CRATE_CAUTION`** (soft, non-blocking) above 0.5C
+
+Generic small LiPo cells are commonly rated for roughly a 0.5–1C safe charge current, so the message spells out the math, e.g. *"380mA into a 100mAh cell is a 3.8C rate — well above the ~0.5-1C safe range for typical small LiPo cells; verify your cell's actual rated charge current before proceeding."* If `chargeCurrentMa` is omitted, it's inferred from a small board → onboard-charge-IC lookup table (currently seeded with Seeed XIAO ESP32S3, XIAO ESP32S3 Sense, and XIAO ESP32C3 — see `data/battery-charge-ic-reference.json`, easy to extend with more boards). These are approximate, manufacturer-published figures — verify against the live datasheet/wiki for your exact board revision before trusting them in a production workflow.
+
+**Battery polarity confirmation** — when `battery.connecting: true` (or any battery field is set) but `battery.polarityConfirmed` isn't explicitly `true`, the preflight blocks with `BATTERY_POLARITY_UNCONFIRMED` and a reminder to never assume BAT+/BAT- from wire color. On Seeed XIAO boards it cites the official convention: the negative pad is closest to the USB-C port, positive is farthest from it.
+
+**ESP32-family pin safety** (table-driven per board via `data/board-reference.json`):
+- **SPI-flash pins** (GPIO6-11 on classic ESP32 WROOM/WROVER modules) — hard error (`SPI_FLASH_PIN_USED`); wiring these prevents boot.
+- **Boot-strapping pins** (GPIO0/2/12/15 on classic ESP32) — caution; usable at runtime but risky if externally held during boot/reset (existing check).
+- **Input-only pins with no internal pull resistor** (GPIO34-39 on classic ESP32) — caution (`NO_INTERNAL_PULL_PIN`); add an external pull-up/pull-down if using them as buttons/switches.
+- **Seeed XIAO ESP32S3** — modeled with its 11 usable GPIO (D0-D10), default I2C on D4/D5, and an informational note surfaced whenever D6/D7 are wired: they're hardware UART1 TX/RX by default, but enabling "USB CDC on Boot" frees them as plain GPIO.
+
+Board data for all of the above lives in JSON, keyed by board id/FQBN, so more boards can be added without touching guardrail logic.
+
+---
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -118,6 +140,7 @@ git clone https://github.com/hardware-mcp/arduino-mcp-server
 cd arduino-mcp-server
 npm install
 npm run typecheck
+npm test
 npm run build
 npm run dev
 ```

@@ -28,6 +28,7 @@ export interface BoardReference {
   };
   uart?: {
     hardware?: string[];
+    conditionalNote?: string;
   };
   notes: string[];
   referenceLinks: string[];

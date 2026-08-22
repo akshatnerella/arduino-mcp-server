@@ -209,6 +209,12 @@
         { "name": "GPIO3", "capabilities": ["RX0"] },
         { "name": "GPIO4" },
         { "name": "GPIO5", "capabilities": ["VSPI_CS"] },
+        { "name": "GPIO6", "capabilities": ["SPI_FLASH"] },
+        { "name": "GPIO7", "capabilities": ["SPI_FLASH"] },
+        { "name": "GPIO8", "capabilities": ["SPI_FLASH"] },
+        { "name": "GPIO9", "capabilities": ["SPI_FLASH"] },
+        { "name": "GPIO10", "capabilities": ["SPI_FLASH"] },
+        { "name": "GPIO11", "capabilities": ["SPI_FLASH"] },
         { "name": "GPIO12", "capabilities": ["MTDI", "BOOT_STRAP"] },
         { "name": "GPIO13", "capabilities": ["MTCK"] },
         { "name": "GPIO14", "capabilities": ["MTMS"] },
@@ -225,14 +231,22 @@
         { "name": "GPIO27" },
         { "name": "GPIO32" },
         { "name": "GPIO33" },
-        { "name": "GPIO34", "capabilities": ["INPUT_ONLY"] },
-        { "name": "GPIO35", "capabilities": ["INPUT_ONLY"] }
+        { "name": "GPIO34", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO35", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO36", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO37", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO38", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO39", "capabilities": ["INPUT_ONLY", "NO_INTERNAL_PULL"] }
       ],
       "analogPins": [
         { "name": "GPIO32", "capabilities": ["ADC1_CH4"] },
         { "name": "GPIO33", "capabilities": ["ADC1_CH5"] },
-        { "name": "GPIO34", "capabilities": ["ADC1_CH6", "INPUT_ONLY"] },
-        { "name": "GPIO35", "capabilities": ["ADC1_CH7", "INPUT_ONLY"] }
+        { "name": "GPIO34", "capabilities": ["ADC1_CH6", "INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO35", "capabilities": ["ADC1_CH7", "INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO36", "capabilities": ["ADC1_CH0", "INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO37", "capabilities": ["ADC1_CH1", "INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO38", "capabilities": ["ADC1_CH2", "INPUT_ONLY", "NO_INTERNAL_PULL"] },
+        { "name": "GPIO39", "capabilities": ["ADC1_CH3", "INPUT_ONLY", "NO_INTERNAL_PULL"] }
       ],
       "pwmPins": ["GPIO2", "GPIO4", "GPIO5", "GPIO12", "GPIO13", "GPIO14", "GPIO15", "GPIO18", "GPIO19", "GPIO21", "GPIO22", "GPIO23", "GPIO25", "GPIO26", "GPIO27", "GPIO32", "GPIO33"],
       "i2c": { "sda": "GPIO21", "scl": "GPIO22" },
@@ -240,11 +254,153 @@
       "uart": { "hardware": ["GPIO1/GPIO3", "GPIO17/GPIO16"] },
       "notes": [
         "Logic is 3.3V only; do not drive pins with 5V.",
-        "Some GPIO are strapping pins and affect boot mode."
+        "Some GPIO are strapping pins and affect boot mode.",
+        "GPIO6-11 are connected internally to the module's SPI flash chip on classic WROOM/WROVER modules; using them for external wiring will prevent boot and is treated as a hard error.",
+        "GPIO34-39 are input-only with no internal pull-up/pull-down resistors; add an external pull resistor if using them as buttons/switches."
       ],
       "referenceLinks": [
         "https://docs.espressif.com/projects/arduino-esp32/en/latest/",
         "https://randomnerdtutorials.com/esp32-pinout-reference-gpios/"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32s3",
+      "displayName": "Seeed XIAO ESP32S3",
+      "aliases": ["xiao esp32s3", "xiao_esp32s3", "xiao esp32-s3"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32S3"],
+      "mcu": "ESP32-S3",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C, or 3.7V single-cell LiPo via onboard JST 1.25mm connector and charge IC",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC"] },
+        { "name": "D1", "capabilities": ["ADC"] },
+        { "name": "D2", "capabilities": ["ADC"] },
+        { "name": "D3", "capabilities": ["ADC"] },
+        { "name": "D4", "capabilities": ["I2C_SDA", "ADC"] },
+        { "name": "D5", "capabilities": ["I2C_SCL", "ADC"] },
+        { "name": "D6", "capabilities": ["TX"] },
+        { "name": "D7", "capabilities": ["RX"] },
+        { "name": "D8", "capabilities": ["SPI_SCK"] },
+        { "name": "D9", "capabilities": ["SPI_MISO"] },
+        { "name": "D10", "capabilities": ["SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0" },
+        { "name": "D1" },
+        { "name": "D2" },
+        { "name": "D3" },
+        { "name": "D4" },
+        { "name": "D5" }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D0" },
+      "uart": {
+        "hardware": ["D6/D7"],
+        "conditionalNote": "D6/D7 map to hardware UART1 TX/RX by default. Enabling \"USB CDC on Boot\" in the board's Tools menu moves the serial console onto native USB and frees D6/D7 as plain GPIO."
+      },
+      "notes": [
+        "Exposes 11 usable GPIO broken out as D0-D10; the remaining ESP32-S3 GPIO are used internally for SPI flash/PSRAM and USB and are not broken out on the XIAO castellated pads.",
+        "Has an onboard LiPo charge IC and a JST 1.25mm 2-pin battery connector. Per Seeed's official docs, the negative (BAT-) pad is the one closest to the USB-C port and positive (BAT+) is the pad farthest from it -- do not assume polarity from wire color.",
+        "D4/D5 are the default I2C pins (SDA/SCL).",
+        "D-to-GPIO mapping (e.g., D6=GPIO43, D7=GPIO44) is approximate and provided for orientation only; verify against the current Seeed wiki before writing low-level/register code."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+        "https://wiki.seeedstudio.com/xiao_esp32s3_battery_usage/"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32s3_sense",
+      "displayName": "Seeed XIAO ESP32S3 Sense",
+      "aliases": ["xiao esp32s3 sense", "xiao_esp32s3_sense", "xiao sense"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32S3"],
+      "mcu": "ESP32-S3",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C, or 3.7V single-cell LiPo via onboard JST 1.25mm connector and charge IC",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC"] },
+        { "name": "D1", "capabilities": ["ADC"] },
+        { "name": "D2", "capabilities": ["ADC"] },
+        { "name": "D3", "capabilities": ["ADC"] },
+        { "name": "D4", "capabilities": ["I2C_SDA", "ADC"] },
+        { "name": "D5", "capabilities": ["I2C_SCL", "ADC"] },
+        { "name": "D6", "capabilities": ["TX"] },
+        { "name": "D7", "capabilities": ["RX"] },
+        { "name": "D8", "capabilities": ["SPI_SCK"] },
+        { "name": "D9", "capabilities": ["SPI_MISO"] },
+        { "name": "D10", "capabilities": ["SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0" },
+        { "name": "D1" },
+        { "name": "D2" },
+        { "name": "D3" },
+        { "name": "D4" },
+        { "name": "D5" }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D0" },
+      "uart": {
+        "hardware": ["D6/D7"],
+        "conditionalNote": "D6/D7 map to hardware UART1 TX/RX by default. Enabling \"USB CDC on Boot\" in the board's Tools menu moves the serial console onto native USB and frees D6/D7 as plain GPIO."
+      },
+      "notes": [
+        "Sense variant adds an OV2640 camera and PDM microphone on the expansion board; base MCU GPIO map (D0-D10) is the same as the plain XIAO ESP32S3.",
+        "The Arduino ESP32 core currently exposes the same FQBN (esp32:esp32:XIAO_ESP32S3) for plain and Sense variants -- disambiguate by board name/id in this reference, not by FQBN alone.",
+        "Has an onboard LiPo charge IC and a JST 1.25mm 2-pin battery connector. Per Seeed's official docs, the negative (BAT-) pad is the one closest to the USB-C port and positive (BAT+) is the pad farthest from it -- do not assume polarity from wire color.",
+        "Camera + mic increase active current draw noticeably versus the plain board; account for this in power.totalCurrentMa when running the camera pipeline."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32s3_sense_getting_started/",
+        "https://wiki.seeedstudio.com/xiao_esp32s3_battery_usage/"
+      ]
+    },
+    {
+      "id": "seeed_xiao_esp32c3",
+      "displayName": "Seeed XIAO ESP32C3",
+      "aliases": ["xiao esp32c3", "xiao_esp32c3", "xiao esp32-c3"],
+      "fqbnCandidates": ["esp32:esp32:XIAO_ESP32C3"],
+      "mcu": "ESP32-C3",
+      "logicVoltage": "3.3V",
+      "operatingVoltage": "5V via USB-C, or 3.7V single-cell LiPo via onboard JST 1.25mm connector and charge IC",
+      "digitalPins": [
+        { "name": "D0", "capabilities": ["ADC"] },
+        { "name": "D1", "capabilities": ["ADC"] },
+        { "name": "D2", "capabilities": ["ADC"] },
+        { "name": "D3", "capabilities": ["ADC"] },
+        { "name": "D4", "capabilities": ["I2C_SDA", "ADC"] },
+        { "name": "D5", "capabilities": ["I2C_SCL", "ADC"] },
+        { "name": "D6", "capabilities": ["TX"] },
+        { "name": "D7", "capabilities": ["RX"] },
+        { "name": "D8", "capabilities": ["SPI_SCK"] },
+        { "name": "D9", "capabilities": ["SPI_MISO"] },
+        { "name": "D10", "capabilities": ["SPI_MOSI"] }
+      ],
+      "analogPins": [
+        { "name": "D0" },
+        { "name": "D1" },
+        { "name": "D2" },
+        { "name": "D3" },
+        { "name": "D4" },
+        { "name": "D5" }
+      ],
+      "pwmPins": ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10"],
+      "i2c": { "sda": "D4", "scl": "D5" },
+      "spi": { "miso": "D9", "mosi": "D10", "sck": "D8", "ss": "D0" },
+      "uart": {
+        "hardware": ["D6/D7"],
+        "conditionalNote": "D6/D7 map to hardware UART1 TX/RX by default. Enabling \"USB CDC on Boot\" in the board's Tools menu moves the serial console onto native USB and frees D6/D7 as plain GPIO."
+      },
+      "notes": [
+        "Exposes 11 usable GPIO broken out as D0-D10, mirroring the XIAO ESP32S3 pin layout.",
+        "Has an onboard LiPo charge IC (higher fast-charge current than the S3 variants -- see the battery C-rate guardrail) and a JST 1.25mm 2-pin battery connector. Per Seeed's official docs, the negative (BAT-) pad is the one closest to the USB-C port and positive (BAT+) is the pad farthest from it -- do not assume polarity from wire color.",
+        "D-to-GPIO mapping is approximate and provided for orientation only; verify against the current Seeed wiki before writing low-level/register code."
+      ],
+      "referenceLinks": [
+        "https://wiki.seeedstudio.com/xiao_esp32c3_getting_started/",
+        "https://wiki.seeedstudio.com/xiao_esp32s3_battery_usage/"
       ]
     }
   ]

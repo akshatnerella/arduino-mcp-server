@@ -21,7 +21,7 @@ import {
 } from "./arduinoCli.js";
 import { PortOperationCoordinator } from "./portCoordinator.js";
 import { SerialSessionManager } from "./serialSessions.js";
-import { runSafetyPreflight, type PowerSpec, type WiringSignal } from "./safety.js";
+import { runSafetyPreflight, type BatterySpec, type PowerSpec, type WiringSignal } from "./safety.js";
 
 const cliPathFromEnv = process.env.ARDUINO_CLI_PATH?.trim();
 const sketchRootFromEnv = process.env.ARDUINO_SKETCH_ROOT?.trim();
@@ -578,6 +578,7 @@ interface SafetyContextInput {
   fqbn?: string;
   wiring?: WiringSignal[];
   power?: PowerSpec;
+  battery?: BatterySpec;
 }
 
 interface ResolvedBoardForSafety {
@@ -727,7 +728,8 @@ async function runSafetyGate(
   const safety = runSafetyPreflight({
     board: resolved.board,
     wiring: context.wiring,
-    power: context.power
+    power: context.power,
+    battery: context.battery
   });
 
   if (safety.status === "blocked") {
@@ -1470,7 +1472,27 @@ server.registerTool(
               totalCurrentMa: z.number().optional(),
               supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
             })
+            .optional(),
+          battery: z
+            .object({
+              capacityMah: z.number().positive().optional().describe("Battery capacity in mAh."),
+              chargeCurrentMa: z
+                .number()
+                .nonnegative()
+                .optional()
+                .describe("Charge current in mA. Defaults to the board's known onboard charge IC current when omitted."),
+              chemistry: z.enum(["lipo", "li-ion", "other"]).optional(),
+              connecting: z
+                .boolean()
+                .optional()
+                .describe("Set true when this preflight covers a battery-connection/first-power-on step."),
+              polarityConfirmed: z
+                .boolean()
+                .optional()
+                .describe("Explicit confirmation BAT+/BAT- polarity was verified against board docs. Never assume from wire color.")
+            })
             .optional()
+            .describe("Optional battery context for charge-rate (C-rate) and polarity guardrails.")
         })
         .optional()
         .describe("Optional electrical context for preflight checks.")
@@ -1504,7 +1526,8 @@ server.registerTool(
             board: safetyContext?.board,
             fqbn: safetyContext?.fqbn ?? fqbn,
             wiring: safetyContext?.wiring,
-            power: safetyContext?.power
+            power: safetyContext?.power,
+            battery: safetyContext?.battery
           },
           port,
           unsafeSkipPreflight
@@ -1689,6 +1712,15 @@ server.registerTool(
               totalCurrentMa: z.number().optional(),
               supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
             })
+            .optional(),
+          battery: z
+            .object({
+              capacityMah: z.number().positive().optional(),
+              chargeCurrentMa: z.number().nonnegative().optional(),
+              chemistry: z.enum(["lipo", "li-ion", "other"]).optional(),
+              connecting: z.boolean().optional(),
+              polarityConfirmed: z.boolean().optional()
+            })
             .optional()
         })
         .optional()
@@ -1726,7 +1758,8 @@ server.registerTool(
             board: safetyContext?.board,
             fqbn: safetyContext?.fqbn ?? fqbn,
             wiring: safetyContext?.wiring,
-            power: safetyContext?.power
+            power: safetyContext?.power,
+            battery: safetyContext?.battery
           },
           port,
           unsafeSkipPreflight
@@ -1944,7 +1977,31 @@ server.registerTool(
           totalCurrentMa: z.number().optional(),
           supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
         })
+        .optional(),
+      battery: z
+        .object({
+          capacityMah: z.number().positive().optional().describe("Battery capacity in mAh."),
+          chargeCurrentMa: z
+            .number()
+            .nonnegative()
+            .optional()
+            .describe(
+              "Charge current in mA. Defaults to the board's known onboard charge IC fast-charge current when omitted."
+            ),
+          chemistry: z.enum(["lipo", "li-ion", "other"]).optional(),
+          connecting: z
+            .boolean()
+            .optional()
+            .describe("Set true when this preflight covers a battery-connection/first-power-on step."),
+          polarityConfirmed: z
+            .boolean()
+            .optional()
+            .describe(
+              "Explicit confirmation that BAT+/BAT- polarity was verified against the board's documentation. Never assume from wire color."
+            )
+        })
         .optional()
+        .describe("Optional battery context for charge-rate (C-rate) and polarity guardrails.")
     },
     outputSchema: toolOutputShape,
     annotations: {
@@ -1952,14 +2009,15 @@ server.registerTool(
       openWorldHint: false
     }
   },
-  async ({ board, fqbn, port, wiring, power }) => {
+  async ({ board, fqbn, port, wiring, power, battery }) => {
     try {
       const resolved = await resolveBoardForSafety(
         {
           board,
           fqbn,
           wiring,
-          power
+          power,
+          battery
         },
         port
       );
@@ -1991,7 +2049,8 @@ server.registerTool(
       const preflight = runSafetyPreflight({
         board: resolved.board,
         wiring,
-        power
+        power,
+        battery
       });
 
       return toToolResult(
@@ -2255,6 +2314,15 @@ server.registerTool(
               totalCurrentMa: z.number().optional(),
               supplyThrough: z.enum(["usb", "vin", "5v_pin", "3v3_pin", "gpio_pin", "unknown"]).optional()
             })
+            .optional(),
+          battery: z
+            .object({
+              capacityMah: z.number().positive().optional(),
+              chargeCurrentMa: z.number().nonnegative().optional(),
+              chemistry: z.enum(["lipo", "li-ion", "other"]).optional(),
+              connecting: z.boolean().optional(),
+              polarityConfirmed: z.boolean().optional()
+            })
             .optional()
         })
         .optional()
@@ -2289,7 +2357,8 @@ server.registerTool(
           board: safetyContext?.board,
           fqbn: safetyContext?.fqbn,
           wiring: safetyContext?.wiring,
-          power: safetyContext?.power
+          power: safetyContext?.power,
+          battery: safetyContext?.battery
         },
         session.port,
         unsafeSkipPreflight

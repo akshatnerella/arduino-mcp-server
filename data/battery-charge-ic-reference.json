@@ -1,0 +1,27 @@
+{
+  "version": "2026-08-22",
+  "source": "Approximate figures taken from manufacturer-published board/wiki pages for boards with an onboard LiPo charge IC. These vary by board revision and silkscreen printing, and are NOT a substitute for checking the manufacturer's current datasheet/wiki for your exact board before trusting them in a production safety workflow.",
+  "boards": [
+    {
+      "boardId": "seeed_xiao_esp32s3",
+      "aliases": ["xiao esp32s3", "xiao_esp32s3", "xiao esp32-s3"],
+      "fastChargeCurrentMa": 50,
+      "trickleChargeCurrentMa": 3.8,
+      "referenceLink": "https://wiki.seeedstudio.com/xiao_esp32s3_battery_usage/"
+    },
+    {
+      "boardId": "seeed_xiao_esp32s3_sense",
+      "aliases": ["xiao esp32s3 sense", "xiao_esp32s3_sense", "xiao sense"],
+      "fastChargeCurrentMa": 100,
+      "trickleChargeCurrentMa": 0.9,
+      "referenceLink": "https://wiki.seeedstudio.com/xiao_esp32s3_sense_getting_started/"
+    },
+    {
+      "boardId": "seeed_xiao_esp32c3",
+      "aliases": ["xiao esp32c3", "xiao_esp32c3", "xiao esp32-c3"],
+      "fastChargeCurrentMa": 380,
+      "trickleChargeCurrentMa": 40,
+      "referenceLink": "https://wiki.seeedstudio.com/xiao_esp32s3_battery_usage/"
+    }
+  ]
+}
